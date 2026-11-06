@@ -1,0 +1,9 @@
+{
+    "require": {
+        "chrome-php/chrome": "^1.0",
+        "symfony/panther": "^2.0"
+    },
+    "require-dev": {
+        "dbrekelmans/bdi": "^1.4"
+    }
+}

@@ -129,5 +129,3 @@ uploads/                Ficheiros enviados
 - [docs/ARQUITETURA.md](docs/ARQUITETURA.md): arquitetura, segurança, fluxos e modelo de dados
 - [docs/API.md](docs/API.md): referência de todos os endpoints
 - [docs/AVALIACAO.md](docs/AVALIACAO.md): avaliação do projeto e estado das correções
-# APPCarros
-# APPCarros

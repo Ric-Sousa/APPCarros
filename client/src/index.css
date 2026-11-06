@@ -1,0 +1,382 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light theme colors matching the design reference */
+  --background: hsl(220, 15%, 97%);
+  --foreground: hsl(220, 10%, 15%);
+  --card: hsl(220, 25%, 99%);
+  --card-foreground: hsl(220, 10%, 15%);
+  --popover: hsl(220, 25%, 99%);
+  --popover-foreground: hsl(220, 10%, 15%);
+  --primary: hsl(220, 85%, 55%);
+  --primary-foreground: hsl(220, 25%, 99%);
+  --secondary: hsl(160, 60%, 50%);
+  --secondary-foreground: hsl(220, 25%, 99%);
+  --muted: hsl(220, 15%, 92%);
+  --muted-foreground: hsl(220, 8%, 45%);
+  --accent: hsl(200, 95%, 60%);
+  --accent-foreground: hsl(220, 25%, 99%);
+  --destructive: hsl(0, 84%, 60%);
+  --destructive-foreground: hsl(220, 25%, 99%);
+  --border: hsl(220, 20%, 90%);
+  --input: hsl(220, 20%, 95%);
+  --ring: hsl(220, 85%, 55%);
+  --chart-1: hsl(220, 85%, 55%);
+  --chart-2: hsl(160, 60%, 50%);
+  --chart-3: hsl(200, 95%, 60%);
+  --chart-4: hsl(280, 65%, 60%);
+  --chart-5: hsl(40, 80%, 60%);
+  --sidebar: hsl(220, 25%, 99%);
+  --sidebar-foreground: hsl(220, 10%, 15%);
+  --sidebar-primary: hsl(220, 85%, 55%);
+  --sidebar-primary-foreground: hsl(220, 25%, 99%);
+  --sidebar-accent: hsl(200, 95%, 60%);
+  --sidebar-accent-foreground: hsl(220, 25%, 99%);
+  --sidebar-border: hsl(220, 20%, 90%);
+  --sidebar-ring: hsl(220, 85%, 55%);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: Menlo, monospace;
+  --radius: 0.75rem;
+  --shadow-2xs: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00), 0px 1px 2px -1px hsl(220, 85%, 55%, 0.00);
+  --shadow: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00), 0px 1px 2px -1px hsl(220, 85%, 55%, 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00), 0px 2px 4px -1px hsl(220, 85%, 55%, 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00), 0px 4px 6px -1px hsl(220, 85%, 55%, 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00), 0px 8px 10px -1px hsl(220, 85%, 55%, 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(220, 85%, 55%, 0.00);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+.dark {
+  /* Explicit dark mode class */
+  --background: hsl(220, 15%, 8%);
+  --foreground: hsl(220, 15%, 92%);
+  --card: hsl(220, 15%, 10%);
+  --card-foreground: hsl(220, 15%, 92%);
+  --popover: hsl(220, 15%, 10%);
+  --popover-foreground: hsl(220, 15%, 92%);
+  --primary: hsl(220, 75%, 65%);
+  --primary-foreground: hsl(220, 15%, 92%);
+  --secondary: hsl(160, 50%, 45%);
+  --secondary-foreground: hsl(220, 15%, 92%);
+  --muted: hsl(220, 15%, 15%);
+  --muted-foreground: hsl(220, 10%, 60%);
+  --accent: hsl(200, 85%, 65%);
+  --accent-foreground: hsl(220, 15%, 92%);
+  --destructive: hsl(0, 74%, 65%);
+  --destructive-foreground: hsl(220, 15%, 92%);
+  --border: hsl(220, 15%, 20%);
+  --input: hsl(220, 15%, 15%);
+  --ring: hsl(220, 75%, 65%);
+  --chart-1: hsl(220, 75%, 65%);
+  --chart-2: hsl(160, 50%, 45%);
+  --chart-3: hsl(200, 85%, 65%);
+  --chart-4: hsl(280, 55%, 65%);
+  --chart-5: hsl(40, 70%, 65%);
+  --sidebar: hsl(220, 15%, 10%);
+  --sidebar-foreground: hsl(220, 15%, 92%);
+  --sidebar-primary: hsl(220, 75%, 65%);
+  --sidebar-primary-foreground: hsl(220, 15%, 92%);
+  --sidebar-accent: hsl(200, 85%, 65%);
+  --sidebar-accent-foreground: hsl(220, 15%, 92%);
+  --sidebar-border: hsl(220, 15%, 20%);
+  --sidebar-ring: hsl(220, 75%, 65%);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* Custom classes for futuristic design effects */
+  .glass-card {
+    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .gradient-bg {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+  }
+
+  .hover-scale {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .hover-scale:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  }
+
+  .pulse-ring {
+    animation: pulse-ring 2s infinite;
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+    }
+    70% {
+      box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+    }
+  }
+
+  /* Floating label animation for forms */
+  .floating-label {
+    transform: translateY(0.5rem);
+    transition: all 0.3s ease;
+  }
+
+  .form-input:focus + .floating-label,
+  .form-input:not(:placeholder-shown) + .floating-label {
+    transform: translateY(-1.5rem) scale(0.875);
+    color: hsl(var(--primary));
+  }
+
+  /* Custom scrollbar for webkit browsers */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+  }
+
+  /* Enhanced focus styles for accessibility */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background;
+  }
+
+  /* Enhanced button styles matching the design */
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary to-secondary text-primary-foreground hover:shadow-lg transition-all duration-300;
+  }
+
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors;
+  }
+
+  .btn-accent {
+    @apply bg-accent text-accent-foreground hover:bg-accent/90 transition-colors;
+  }
+
+  .btn-destructive {
+    @apply bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors;
+  }
+
+  /* Progress bar animations */
+  .progress-bar {
+    transition: width 0.5s ease-in-out;
+  }
+
+  /* Card hover effects */
+  .card-hover {
+    @apply hover:shadow-lg hover:-translate-y-1 transition-all duration-300;
+  }
+
+  /* Gradient text effect */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent;
+  }
+
+  /* Loading skeleton animation */
+  .skeleton {
+    @apply animate-pulse bg-muted rounded;
+  }
+}
+
+@layer components {
+  /* Form input with floating label */
+  .input-floating {
+    @apply relative;
+  }
+
+  .input-floating input {
+    @apply w-full px-4 py-3 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent placeholder-transparent;
+  }
+
+  .input-floating label {
+    @apply absolute left-4 text-muted-foreground pointer-events-none transition-all duration-300;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  .input-floating input:focus + label,
+  .input-floating input:not(:placeholder-shown) + label {
+    @apply text-primary text-sm;
+    top: 0;
+    transform: translateY(-50%) scale(0.875);
+    background: hsl(var(--background));
+    padding: 0 4px;
+  }
+
+  /* Status badges */
+  .badge-success {
+    @apply bg-secondary/90 text-secondary-foreground px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-warning {
+    @apply bg-yellow-500/90 text-white px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-danger {
+    @apply bg-destructive/90 text-destructive-foreground px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-info {
+    @apply bg-accent/90 text-accent-foreground px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  /* Alert styles */
+  .alert-urgent {
+    @apply bg-destructive/90 text-destructive-foreground px-2 py-1 rounded-full text-xs font-medium;
+  }
+
+  /* Vehicle card specific styles */
+  .vehicle-card {
+    @apply bg-card rounded-xl border border-border overflow-hidden hover-scale group;
+  }
+
+  .vehicle-card-header {
+    @apply relative h-48 bg-gradient-to-br from-primary/20 to-secondary/20;
+  }
+
+  .vehicle-icon {
+    @apply absolute inset-0 flex items-center justify-center;
+  }
+
+  .vehicle-icon i {
+    @apply text-6xl text-primary/30;
+  }
+
+  /* Progress indicators */
+  .progress-indicator {
+    @apply w-full bg-muted rounded-full h-2;
+  }
+
+  .progress-bar-fill {
+    @apply h-2 rounded-full transition-all duration-300;
+  }
+
+  /* Mobile responsive utilities */
+  .mobile-hidden {
+    @apply hidden lg:block;
+  }
+
+  .mobile-only {
+    @apply block lg:hidden;
+  }
+
+  /* Animation utilities */
+  .fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .slide-in {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+}
+
+@layer utilities {
+  /* Custom utility classes */
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent;
+  }
+
+  .border-gradient {
+    border-image: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--secondary))) 1;
+  }
+
+  .shadow-glow {
+    box-shadow: 0 0 20px rgba(var(--primary-rgb, 59, 130, 246), 0.3);
+  }
+
+  .backdrop-blur-custom {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  /* Glass morphism effect */
+  .glass {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .glass-dark {
+    background: rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  /* Responsive text utilities */
+  .text-responsive {
+    @apply text-sm sm:text-base md:text-lg;
+  }
+
+  .text-responsive-xl {
+    @apply text-lg sm:text-xl md:text-2xl lg:text-3xl;
+  }
+
+  /* Safe area utilities for mobile */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-left {
+    padding-left: env(safe-area-inset-left);
+  }
+
+  .safe-right {
+    padding-right: env(safe-area-inset-right);
+  }
+}
