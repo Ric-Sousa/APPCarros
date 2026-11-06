@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -72,14 +72,21 @@ export function VehicleRecommendationsCard({
 }: VehicleRecommendationsCardProps) {
   const recommendations = getStaticRecommendations(brand, model);
 
+  // Callbacks numa ref: o efeito só deve correr quando a marca/modelo mudam.
+  // Com os callbacks nas dependências, um pai que os recria a cada render
+  // (e faz setState neles) entrava num ciclo infinito de renderização.
+  const callbacks = useRef({ onOilRecommendation, onTireRecommendation, onOilIntervalUpdate, onTireIntervalUpdate });
+  callbacks.current = { onOilRecommendation, onTireRecommendation, onOilIntervalUpdate, onTireIntervalUpdate };
+
   useEffect(() => {
-    if (recommendations) {
-      onOilRecommendation?.(recommendations.oilRecommendations.recommendedBrands);
-      onTireRecommendation?.(recommendations.tireRecommendations.recommendedBrands);
-      onOilIntervalUpdate?.(recommendations.oilRecommendations.intervalKm, recommendations.oilRecommendations.intervalMonths);
-      onTireIntervalUpdate?.(recommendations.tireRecommendations.intervalKm);
-    }
-  }, [brand, model, onOilRecommendation, onTireRecommendation, onOilIntervalUpdate, onTireIntervalUpdate]);
+    if (!recommendations) return;
+    const cb = callbacks.current;
+    cb.onOilRecommendation?.(recommendations.oilRecommendations.recommendedBrands);
+    cb.onTireRecommendation?.(recommendations.tireRecommendations.recommendedBrands);
+    cb.onOilIntervalUpdate?.(recommendations.oilRecommendations.intervalKm, recommendations.oilRecommendations.intervalMonths);
+    cb.onTireIntervalUpdate?.(recommendations.tireRecommendations.intervalKm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recommendations deriva de brand/model
+  }, [brand, model]);
 
   if (!brand || !model) {
     return null;
