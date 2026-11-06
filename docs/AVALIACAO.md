@@ -1,7 +1,132 @@
 # Avaliação do projeto
 
-- **Avaliação inicial:** 2026-11-06, sobre o commit `a5c0df1` ("Estado inicial").
-- **Correções:** feitas a seguir, na mesma data. Para ver todas as alterações: `git diff a5c0df1`.
+Este documento tem duas avaliações: a **2.ª** (atual, por corrigir) e a **1.ª** (já corrigida, mais abaixo).
+
+---
+
+# 2.ª avaliação (2026-11-06, depois das correções e do suporte a vários motores de BD)
+
+## Como foi feita
+
+| Verificação | Resultado |
+|---|---|
+| `tsc` | ✅ 0 erros |
+| `npm test` | ✅ 20 testes (unitários e integração pela API) |
+| `vite build` | ✅ JS principal com 358 kB (113 kB gzip) |
+| Navegação automática no Edge | ✅ Sem crashes em nenhuma página, separador ou botão (desktop e 390 px) |
+| `npm audit --omit=dev` | ❌ 27 vulnerabilidades (1 crítica, 21 altas) |
+| Revisão de código | Servidor e cliente, em paralelo e de forma independente. Os achados abaixo foram confirmados no código ou com pedidos reais |
+
+Legenda: 🔴 corrigir já · 🟠 bug funcional · 🟡 UX/qualidade · 🔵 melhoria
+
+## 🔴 Segurança
+
+| # | Problema | Onde | Correção |
+|---|---|---|---|
+| S1 | **Ler ficheiros de outros utilizadores:** o cliente pode gravar `receiptUrl` numa despesa a apontar para o ficheiro de outra pessoa, e `/uploads` passa a deixá-lo abrir esse ficheiro (confirmado) | `shared/schema.ts` (`createExpenseRecordSchema`), `storage.userOwnsUpload` | Retirar `receiptUrl` do esquema público; só a rota de OCR o define |
+| S2 | **Apagar ficheiros de outros utilizadores:** `imageUrl: "/uploads/vehicle-x/../<ficheiro>"`, seguido de troca de foto ou de apagar o veículo, apaga o ficheiro alheio (confirmado) | `http.ts` (`isOwnVehiclePhoto`, `removeUpload`), `routes/vehicles.ts` | Validar `imageUrl` como `/uploads/vehicle-<uuid>.(jpg\|png\|webp)` ou `https://`; só apagar se nenhum outro veículo usar a foto |
+| S3 | **Dependências vulneráveis:** 27 no total, incluindo `proxy-addr` (crítica), `jws` (verificação HMAC), `multer` (DoS e contorno do limite de tamanho), `express-rate-limit`, `socket.io`, `axios` e `zod` | `package-lock.json` | `npm audit fix` (sem mudanças de versão maior) e `drizzle-orm` 0.45 |
+| S4 | **Atrás de um proxy (nginx/PaaS), todos os clientes partilham o mesmo IP:** 10 logins/registos em 15 min, mesmo com sucesso, bloqueiam toda a gente | `index.ts`, `routes/auth.ts` | `TRUST_PROXY` configurável; limitadores separados; `skipSuccessfulRequests` no login |
+| S5 | **A comparação com "veículos iguais" revela dados de outros:** com 2 veículos iguais, a média revela as despesas exatas do outro utilizador; além disso, não tem limite (2 consultas por veículo) | `storage.getVehicleComparison` | Só mostrar médias com 5 ou mais veículos e calcular numa única consulta SQL |
+| S6 | **`vehicle_api.php` está aberto a qualquer pessoa:** sem autenticação, com CORS `*`, abre um Chrome por pedido (fácil de usar para DoS) e regista as matrículas num `.txt` dentro da pasta pública | `vehicle_api.php` | Segredo partilhado num header, rate limit e log fora da pasta pública |
+| S7 | **Matrículas enviadas sem encriptação:** sem `VEHICLE_API_URL`, o servidor usa um IP fixo por HTTP, e uma falha de rede aparece como "sem dados" (404) | `services/vehicleApi.ts` | Sem valor por omissão (503 se não estiver configurado); 502 em erros de rede |
+
+## 🟠 Bugs funcionais
+
+| # | Problema | Sintoma | Onde |
+|---|---|---|---|
+| F1 | **Nada gera alertas** | "Alertas Ativos" está sempre a 0, "Próximas Manutenções" está vazio e "Concluir" não serve para nada | servidor (nenhum insert em `alerts`), `UpcomingMaintenance.tsx` |
+| F2 | **Marcações e reservas** são gravadas mas não aparecem em lado nenhum | O utilizador agenda e a marcação "desaparece" | `MaintenanceAppointmentModal`, `ChargingStationReservationModal` |
+| F3 | **A consulta de matrícula lê os campos com nomes errados** (o PHP devolve `entity`, `category`, `inspectionValidity`) | Apaga campos obrigatórios do formulário; o combustível fica num Select não controlado e o servidor rejeita-o com 400 | `AddVehicleModal.tsx:329-341`, `VehicleRegistrationFields.tsx:94` |
+| F4 | **Códigos de combustível diferentes** em cada formulário (`gasoline95`, `gasoline`, `gas`, `gasoline_98`…) | Ao editar, o Select aparece vazio; o cartão mostra "gasoline95" | 5 componentes |
+| F5 | **Formato dos dados IoT diferente** entre cliente e servidor | "Desligado", "Invalid Date" e "Atenção necessária" em tudo | `IoTDashboard.tsx` vs `routes/mobility.ts` |
+| F6 | **Formato dos postos de carregamento diferente**, e a lista do GPS pode ser substituída pela de Lisboa | Postos "Desconhecido", "€/kWh" vazio | `ElectricVehicleHub.tsx` |
+| F7 | **Números e datas sem validação** | `liters:"abc"` é gravado; uma data inválida dá 500 em vez de 400 | `shared/schema.ts` |
+| F8 | **Dados desatualizados** (faltam invalidações da cache) | Os km do veículo e o "KMs este mês" não mudam depois de uma viagem; a "Análise" fica antiga | `MileageTracker.tsx`, mutações de combustível e despesas |
+| F9 | Ao editar um abastecimento, o total é recalculado e o original perde-se; um `sort()` altera a cache | Valores alterados sem o utilizador mexer | `VehicleFuelManagement.tsx:218, 374` |
+| F10 | A marca do óleo faz um POST e mostra um toast **a cada tecla** | Toasts em cascata | `AddVehicleModal.tsx:676` |
+| F11 | "Depósito cheio" nunca é perguntado; há 3 fórmulas de consumo diferentes | Consumo médio a 0 ou inconsistente | `FuelConsumption`, `VehicleFuelManagement` |
+| F12 | **Gravador de km:** o estado muda antes de o POST terminar; uma viagem em curso perde-se ao recarregar; não há histórico | O "Parar" não faz nada; ficam viagens "active" para sempre | `MileageTracker.tsx` |
+| F13 | **Despesas:** faltam as categorias portagem/estacionamento; a "média mensal" é inventada; o botão "Exportar" não faz nada; o separador "Análise" diz "em desenvolvimento" | | `ExpenseManagement.tsx`, `ExpenseListItem.tsx` |
+| F14 | A calculadora "Elétrico vs Combustão" só aparece **em veículos que já são elétricos** | Nunca é útil | `VehicleDetails.tsx:298` |
+| F15 | Login e registo com demasiadas tentativas (429) mostram "Erro de rede" | Mensagem errada | `Login.tsx`, `Register.tsx` |
+| F16 | Um ficheiro inexistente em `/uploads` devolve 200 com o `index.html`; não há health check | É descarregado HTML como se fosse PDF | `routes/records.ts`, `index.ts` |
+| F17 | Apagar um veículo deixa os documentos e recibos no disco | Dados pessoais nunca são apagados | `storage.deleteVehicle` |
+| F18 | Abrir um documento é bloqueado no Safari/iOS (`window.open` depois de um `await`) | O documento não abre no iPhone | `apiUtils.openProtectedUrl` |
+| F19 | `oilBrand: "constructor"` dá 500 (consulta ao protótipo do objeto); coordenadas fora do intervalo são aceites | | `vehicleSpecs.ts:289`, `mobility.ts` |
+| F20 | O CORS rejeita pedidos da própria app acedida por outro endereço (127.0.0.1, IP da rede local) | 403 em tudo o que grava | `index.ts` |
+
+## 🟡 UX, idioma e acessibilidade
+
+- **Telemóvel:**
+  - O Dashboard tem 121 px a mais de largura (botão "Agendar" e Select de largura fixa em `UpcomingMaintenance`).
+  - Os separadores `grid-cols-7`/`grid-cols-5` transbordam (VehicleDetails, FuelConsumption, EnhancedRecommendations).
+  - `bg-background/95/90` é uma classe inválida, por isso o cabeçalho do modal fica transparente.
+- **Modo escuro:** há cerca de 380 cores fixas (`bg-gray-50`, `bg-white`, `bg-*-100`) e nenhuma variante `dark:`. Há linhas e cartões brancos com texto claro (Login, VehicleFuelManagement, FuelConsumption, MileageTracker, selos).
+- **pt-PT:**
+  - gerúndios de pt-BR ("Entrando...", "Atualizando...", "Reservando...") e "Gravação salva";
+  - página 404 toda em inglês;
+  - "Close" para leitores de ecrã;
+  - "low/medium/high" e "clouds" mostrados em bruto;
+  - `alert()` em inglês.
+- **Acessibilidade:**
+  - 10 diálogos sem descrição (aviso do Radix);
+  - botões só com ícone e sem `aria-label`;
+  - `htmlFor` a apontar para ids que não existem;
+  - `alert()`/`prompt()` nativos.
+- **Detalhes:**
+  - "0" solto em vários sítios e "€0.00";
+  - datas por omissão em UTC (dia errado entre a meia-noite e a 01:00);
+  - classes Tailwind que não existem (`text-xxs`, `lg:flex-2`);
+  - progresso falso na consulta de matrícula;
+  - o tema "auto" não segue as mudanças do sistema.
+- **Pedidos pesados sem limite:** OCR (Tesseract), planeador de rotas, geocoding (o Nominatim só permite 1 pedido/s) e postos de carregamento. A criação de um veículo sem foto espera pela pesquisa de fotos (até cerca de 30 s).
+- **Conta:** não há alteração de palavra-passe nem eliminação de conta. O tempo de resposta do login revela se um email existe. O socket não expira com o token. O tamanho do `JWT_SECRET` não é validado.
+
+## 🔵 Melhorias e código
+
+- **Código morto:**
+  - Servidor:
+    - esquemas zod `insert*`/`select*` e `*Relations` não usados;
+    - tabelas `trip_records` e `vehicle_specs` sem uso;
+    - 5 rotas `/api/external/*` e `PATCH /alerts/:id/read` que o cliente não chama.
+  - Cliente:
+    - `ui/skeleton`, `ui/toggle` (e `@radix-ui/react-toggle`) e `use-mobile`;
+    - cerca de 150 linhas do `AdaptiveUIContext`;
+    - `apiRequest` (um segundo caminho de pedidos);
+    - `useVehicleRecommendations`;
+    - 54 variáveis e imports sem uso.
+- **Duplicações:**
+  - formulário de manutenção duplicado;
+  - dados de óleo/pneus fixos no `VehicleRecommendationsCard`, que duplicam `/api/vehicle-specs`;
+  - `FuelStationComparator` a chamar o Nominatim e o Overpass diretamente;
+  - transformações de datas e números copiadas 3 vezes em `schema.ts`.
+- **Desempenho:**
+  - o Leaflet é carregado em todas as páginas (só o Planeador o usa);
+  - `RecentActivity` faz 1 pedido por veículo;
+  - `FuelAlerts` descarrega todos os abastecimentos;
+  - o IoT pede dados de demonstração a cada 5 s.
+- **Componentes ainda grandes:** AddVehicleModal (818 linhas), FuelConsumption (615), ExpenseManagement (594), ElectricVehicleHub (583), VehicleDetailsModal (565).
+- **Operação:**
+  - sem encerramento ordenado (SIGTERM);
+  - fotos de perfil antigas nunca são apagadas;
+  - `setPreferences` sem transação;
+  - as datas são guardadas de forma diferente consoante o motor, e só estão certas enquanto o fuso horário do servidor não mudar.
+
+## Ordem recomendada
+
+1. **Segurança:** S1 a S5 (poucas linhas cada), mais S6 e S7 no servidor PHP.
+2. **Funcionalidades que não funcionam:** F1 a F6, F12 e F13.
+3. **Dados corretos:** F7 a F11 e F15 a F20.
+4. **Telemóvel, modo escuro, pt-PT e acessibilidade.**
+5. **Limpeza e desempenho.**
+
+---
+
+# 1.ª avaliação (corrigida)
+
+- **Avaliação inicial:** 2026-11-06, sobre o commit `a5c0df1` ("Estado inicial"; este histórico foi depois recriado).
+- **Correções:** feitas a seguir, na mesma data.
 
 ## Verificações
 

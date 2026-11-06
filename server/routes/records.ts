@@ -10,20 +10,16 @@ import {
   updateMileageTripSchema,
 } from '@shared/schema';
 import { storage } from '../storage';
-import { requireAuth, requireVehicle, ownedVehicle, userId, uploads, UPLOAD_DIR, HttpError, tokenFromHeader } from '../http';
+import { requireAuth, requireVehicle, ownedVehicle, userId, uploads, UPLOAD_DIR, HttpError, tokenFromHeader, removeUpload } from '../http';
 import { parseImage, parsePdf, buildExpensePayload } from '../services/ocrService';
 
-const removeUpload = (fileUrl: string) => {
-  const file = path.join(UPLOAD_DIR, path.basename(fileUrl));
-  fs.rm(file, { force: true }, () => {});
-};
 
 export function registerRecordRoutes(app: Express) {
   // ---------- Ficheiros enviados ----------
-  // Fotos de perfil são públicas; o resto só para o dono, com o token no header Authorization.
+  // Fotos de perfil e de veículos são públicas (para poderem ir num <img>); o resto só para o dono, com o token no header Authorization.
   app.use('/uploads', async (req, res, next) => {
     const name = path.basename(req.path);
-    if (name.startsWith('profile-')) return next();
+    if (name.startsWith('profile-') || name.startsWith('vehicle-')) return next();
     const user = tokenFromHeader(req);
     if (!user) return res.status(401).json({ message: 'Token obrigatório para aceder a ficheiros.' });
     const owns = name.startsWith(`${user.sub}-`) || await storage.userOwnsUpload(user.sub, name);

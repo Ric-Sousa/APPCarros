@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 import {
   createVehicleSchema,
   updateVehicleSchema,
@@ -7,13 +8,26 @@ import {
   createMaintenanceAppointmentSchema,
 } from '@shared/schema';
 import { storage } from '../storage';
-import { requireAuth, requireVehicle, userId, HttpError } from '../http';
+import { requireAuth, requireVehicle, userId, HttpError, uploads, removeUpload, isOwnVehiclePhoto } from '../http';
 import { predictiveRisk } from '../stats';
 import { getVehicleByLicensePlate } from '../services/vehicleApi';
+import { getImageSuggestions, trackUnsplashUse } from '../services/vehicleImage';
 import { VehicleSpecsService } from '../services/vehicleSpecs';
 
 // Cada consulta de matrícula abre um Chrome headless no serviço PHP: limitar
 const plateLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
+
+// Cada pedido de sugestões faz até 3 pesquisas no Wikimedia Commons e 1 no Unsplash
+const photoLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+
+const suggestionsQuery = z.object({
+  brand: z.string().trim().min(1).max(100),
+  model: z.string().trim().min(1).max(100),
+  year: z.coerce.number().int().min(1900).max(2100).optional(),
+  engineDisplacement: z.coerce.number().int().positive().max(20000).optional(),
+  vehicleCategory: z.string().max(100).optional(),
+  iucCategory: z.string().max(100).optional(),
+});
 
 const updateAppointmentSchema = createMaintenanceAppointmentSchema.omit({ vehicleId: true, userId: true }).partial();
 
@@ -33,11 +47,17 @@ export function registerVehicleRoutes(app: Express) {
   });
 
   app.patch('/api/vehicles/:id', requireAuth, requireVehicle, async (req, res) => {
-    res.json(await storage.updateVehicle(req.vehicle!.id, updateVehicleSchema.parse(req.body)));
+    const data = updateVehicleSchema.parse(req.body);
+    const updated = await storage.updateVehicle(req.vehicle!.id, data);
+    // Trocou de foto: a foto própria antiga deixa de ser usada
+    const oldPhoto = req.vehicle!.imageUrl;
+    if (data.imageUrl !== undefined && data.imageUrl !== oldPhoto && isOwnVehiclePhoto(oldPhoto)) removeUpload(oldPhoto!);
+    res.json(updated);
   });
 
   app.delete('/api/vehicles/:id', requireAuth, requireVehicle, async (req, res) => {
     await storage.deleteVehicle(req.vehicle!.id);
+    if (isOwnVehiclePhoto(req.vehicle!.imageUrl)) removeUpload(req.vehicle!.imageUrl!);
     res.status(204).send();
   });
 
@@ -57,6 +77,23 @@ export function registerVehicleRoutes(app: Express) {
     const data = await getVehicleByLicensePlate(plate);
     if (!data) return res.status(404).json({ message: `Não foram encontrados dados para a matrícula ${plate}.` });
     res.json(data);
+  });
+
+  // ---------- Fotos ----------
+  app.get('/api/vehicle-photos/suggestions', requireAuth, photoLimiter, async (req, res) => {
+    res.json(await getImageSuggestions(suggestionsQuery.parse(req.query)));
+  });
+
+  // Foto própria: devolve o URL para usar em imageUrl (na criação ou num PATCH do veículo)
+  // ponytail: fotos substituídas ou de veículos que não chegaram a ser criados ficam em uploads/; limpar órfãos se o disco for um problema
+  app.post('/api/vehicle-photos', requireAuth, uploads.vehiclePhoto.single('image'), (req, res) => {
+    if (!req.file) throw new HttpError(400, 'Nenhum ficheiro enviado');
+    res.status(201).json({ url: `/uploads/${req.file.filename}` });
+  });
+
+  app.post('/api/vehicle-photos/track', requireAuth, async (req, res) => {
+    await trackUnsplashUse(String(req.body?.trackUrl ?? ''));
+    res.status(204).send();
   });
 
   // ---------- Especificações ----------

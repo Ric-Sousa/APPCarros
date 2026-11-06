@@ -1,6 +1,10 @@
 import React from 'react';
 import { useParams, useLocation } from 'wouter';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Image as ImageIcon } from 'lucide-react';
+import { VehicleImagePicker } from '../components/VehicleImagePicker';
+import { patch, handleApiError } from '../lib/apiUtils';
+import { useToast } from '../hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -25,6 +29,9 @@ const VehicleDetails: React.FC = () => {
     queryKey: ['/api/vehicles', vehicleId],
     enabled: !!vehicleId,
   });
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
     const formatDate = (date: Date | string | null | undefined) => {
     if (!date) return 'Não definido';
@@ -119,15 +126,48 @@ const VehicleDetails: React.FC = () => {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {vehicle.imageUrl && (
-              <div className="md:col-span-2 lg:col-span-1">
-                <img 
-                  src={vehicle.imageUrl} 
-                  alt={`${vehicle.brand} ${vehicle.model}`}
-                  className="w-full h-32 object-cover rounded-lg"
+            <div className="md:col-span-2 lg:col-span-1">
+                {vehicle.imageUrl ? (
+                  <img
+                    src={vehicle.imageUrl}
+                    alt={`${vehicle.brand} ${vehicle.model}`}
+                    className="w-full h-32 object-cover rounded-lg"
+                  />
+                ) : (
+                  <div className="flex h-32 w-full items-center justify-center rounded-lg bg-muted">
+                    <Car className="h-10 w-10 text-muted-foreground/50" aria-hidden="true" />
+                  </div>
+                )}
+                {vehicle.imageCredit && (
+                  <a
+                    href={vehicle.imageCreditUrl ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 block truncate text-[11px] text-muted-foreground hover:underline"
+                    title={vehicle.imageCredit}
+                  >
+                    {vehicle.imageCredit}
+                  </a>
+                )}
+                <Button variant="outline" size="sm" className="mt-2 w-full" onClick={() => setPickerOpen(true)} data-testid="button-change-photo">
+                  <ImageIcon className="mr-1 h-4 w-4" aria-hidden="true" />
+                  Mudar foto
+                </Button>
+                <VehicleImagePicker
+                  open={pickerOpen}
+                  onOpenChange={setPickerOpen}
+                  vehicle={vehicle}
+                  onSelect={async (photo) => {
+                    try {
+                      await patch(`/api/vehicles/${vehicle.id}`, photo);
+                      queryClient.invalidateQueries({ queryKey: ['/api/vehicles'] });
+                      toast({ title: 'Foto atualizada' });
+                    } catch (error) {
+                      toast({ title: 'Erro ao mudar a foto', description: handleApiError(error), variant: 'destructive' });
+                    }
+                  }}
                 />
-              </div>
-            )}
+            </div>
             
             <div className="space-y-2">
               <div>

@@ -18,6 +18,7 @@ import { AutocompleteInput } from "@/components/ui/autocomplete-input";
 import { VehicleRecommendationsCard } from "@/components/VehicleRecommendationsCard";
 import { useOilInterval } from "@/hooks/useVehicleSpecs";
 import VehicleRegistrationFields from "@/components/VehicleRegistrationFields";
+import { VehicleImagePicker, uploadVehiclePhoto, type PickedPhoto } from "@/components/VehicleImagePicker";
 import VehicleDatesFields from "@/components/VehicleDatesFields";
 import { z } from "zod";
 
@@ -49,6 +50,8 @@ const formSchema = z.object({
   insuranceDue: z.string().min(1, "Vencimento Seguro é obrigatório"),
 
   imageUrl: z.string().optional(),
+  imageCredit: z.string().optional(),
+  imageCreditUrl: z.string().optional(),
   originalColor: z.string().optional(),
   origin: z.string().optional(),
   registrationLocation: z.string().optional(),
@@ -149,8 +152,22 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
       iucDue: "",
       insuranceDue: "",
       imageUrl: "",
+      imageCredit: "",
+      imageCreditUrl: "",
     },
   });
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+
+  // Foto escolhida (galeria ou envio próprio); null limpa e volta à foto automática ao submeter
+  const applyPhoto = (photo: PickedPhoto | null) => {
+    setImagePreview(photo?.imageUrl ?? null);
+    setSelectedImage(photo?.imageUrl ?? null);
+    form.setValue('imageUrl', photo?.imageUrl ?? '');
+    form.setValue('imageCredit', photo?.imageCredit ?? '');
+    form.setValue('imageCreditUrl', photo?.imageCreditUrl ?? '');
+  };
 
   // Função para lidar com o upload de imagem
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -176,14 +193,13 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
         return;
       }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        setImagePreview(result);
-        setSelectedImage(result);
-        form.setValue('imageUrl', result);
-      };
-      reader.readAsDataURL(file);
+      // Envia já o ficheiro e guarda só o URL (antes ia em base64 dentro do pedido e excedia os limites)
+      event.target.value = '';
+      setPhotoUploading(true);
+      uploadVehiclePhoto(file)
+        .then((url) => applyPhoto({ imageUrl: url, imageCredit: null, imageCreditUrl: null }))
+        .catch((error) => toast({ title: "Erro ao enviar a foto", description: handleApiError(error), variant: "destructive" }))
+        .finally(() => setPhotoUploading(false));
     }
   };
 
@@ -387,6 +403,8 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
       ...data,
       fuelType: data.fuelType || undefined,
       imageUrl: data.imageUrl || undefined,
+      imageCredit: data.imageCredit || undefined,
+      imageCreditUrl: data.imageCreditUrl || undefined,
       originalColor: data.originalColor || undefined,
       origin: data.origin || undefined,
       registrationLocation: data.registrationLocation || undefined,
@@ -495,11 +513,7 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => {
-                            setImagePreview(null);
-                            setSelectedImage(null);
-                            form.setValue('imageUrl', '');
-                          }}
+                          onClick={() => applyPhoto(null)}
                           className="absolute top-2 right-2"
                         >
                           Remover
@@ -529,37 +543,32 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
                           </span>
                         </Button>
                       </label>
-                      {!selectedImage && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="flex items-center gap-1"
-                          onClick={() => {
-                            const brand = form.getValues('brand');
-                            const model = form.getValues('model');
-
-                            if (!brand || !model) {
-                              toast({
-                                title: "Informação em falta",
-                                description: "Por favor preencha a marca e modelo primeiro.",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
-
-                            // Aqui podemos implementar a busca automática da imagem
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="flex items-center gap-1"
+                        onClick={() => {
+                          if (!form.getValues('brand') || !form.getValues('model')) {
                             toast({
-                              title: "Pesquisa automática",
-                              description: "A imagem será buscada automaticamente quando submeter o formulário.",
+                              title: "Informação em falta",
+                              description: "Preencha a marca e o modelo primeiro.",
+                              variant: "destructive",
                             });
-                          }}
-                        >
-                          <ImageIcon className="h-3 w-3" />
-                          Auto da Unsplash
-                        </Button>
-                      )}
+                            return;
+                          }
+                          setPickerOpen(true);
+                        }}
+                        data-testid="button-photo-picker"
+                      >
+                        <ImageIcon className="h-3 w-3" aria-hidden="true" />
+                        Sugestões de fotos
+                      </Button>
                     </div>
+                    {photoUploading && <p className="text-xs text-muted-foreground" role="status">A enviar a foto...</p>}
+                    {!selectedImage && (
+                      <p className="text-xs text-muted-foreground">Sem foto escolhida, é usada automaticamente a melhor sugestão.</p>
+                    )}
                   </div>
                 </div>
 
@@ -790,6 +799,19 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
             />
           </div>
         </div>
+      <VehicleImagePicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        vehicle={{
+          brand: form.getValues('brand'),
+          model: form.getValues('model'),
+          year: form.getValues('year'),
+          engineDisplacement: form.getValues('engineDisplacement'),
+          vehicleCategory: form.getValues('vehicleCategory'),
+          iucCategory: form.getValues('iucCategory'),
+        }}
+        onSelect={applyPhoto}
+      />
       </DialogContent>
     </Dialog>
   );

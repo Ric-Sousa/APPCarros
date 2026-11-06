@@ -43,12 +43,23 @@ Base: `http://localhost:5000`. Corpo e resposta em JSON, exceto onde se indica `
 | DELETE | `/api/vehicles/:id` | 🔒 | `204` |
 | GET | `/api/vehicles/:id/predictive-status` | 🔒 | `{ oilRisk, tireRisk, inspectionRisk }` (de 0 a 1) |
 | GET | `/api/vehicles/:vehicleId/compare` | 🔒 | Consumo e despesas do veículo vs. média de veículos da mesma marca/modelo: `{ userConsumption, averageConsumption, userExpenses, averageExpenses, rankingPosition, totalSimilarVehicles, recommendations[] }` |
-| GET | `/api/stats` | 🔒 | `{ totalVehicles, totalAlerts, urgentAlerts }` |
+| GET | `/api/stats` | 🔒 | `{ totalVehicles, totalAlerts, urgentAlerts, monthlyKms }` (`monthlyKms`: km das viagens deste mês) |
 | GET | `/api/stats/fleet-comparison` | 🔒 | `{ totalVehicles, averageFuelConsumption, totalMonthlyExpenses, mostEfficientVehicle, mostExpensiveVehicle }` |
 | GET | `/api/vehicle-data/:licensePlate` | 🔒 | Dados por matrícula (serviço externo). Limite: 20 pedidos / 15 min |
 | GET | `/api/vehicle-specs/:brand/:model` | 🔒 | Recomendações de óleo e pneus (tabela estática) |
 | GET | `/api/autocomplete/:type?q=` | 🔒 | `type`: `oil` \| `tire` \| `both` |
 | POST | `/api/oil-interval` | 🔒 | `{ oilBrand, vehicleBrand, vehicleModel }` |
+
+## Fotos de veículos
+
+| Método | Rota | Auth | Notas |
+|---|---|---|---|
+| GET | `/api/vehicle-photos/suggestions?brand=&model=&year=&engineDisplacement=&vehicleCategory=&iucCategory=` | 🔒 | Até 8 fotos do Wikimedia Commons, ordenadas por modelo, ano e cilindrada no título, mais até 4 do Unsplash: `[{ url, thumbUrl, credit, creditUrl, source, trackUrl? }]`. Limite: 30 pedidos / 15 min |
+| POST | `/api/vehicle-photos` | 🔒 | multipart `image` (JPEG/PNG/WEBP, ≤5 MB) → `201 { url }` (`/uploads/vehicle-<uuid>.<ext>`, público). Usar o URL em `imageUrl` |
+| POST | `/api/vehicle-photos/track` | 🔒 | `{ trackUrl }`: avisa o Unsplash de que a foto foi usada (regras da API) |
+
+- **Ao criar um veículo sem `imageUrl`**, o servidor escolhe a melhor sugestão e guarda `imageCredit`/`imageCreditUrl`, que devem ser mostrados junto da foto (licenças CC BY-SA e regras do Unsplash).
+- **Ao trocar de foto (PATCH) ou apagar o veículo**, a foto própria antiga é apagada do disco.
 
 ## Manutenção, marcações e alertas
 
@@ -85,7 +96,7 @@ Base: `http://localhost:5000`. Corpo e resposta em JSON, exceto onde se indica `
 | POST | `/api/vehicles/:vehicleId/documents` | 🔒 | multipart `document` (PDF/JPEG/PNG/WEBP, ≤10 MB) + `type`, `description?`, `notes?` |
 | GET | `/api/vehicles/:vehicleId/documents` | 🔒 | |
 | DELETE | `/api/documents/:documentId` | 🔒 | Apaga também o ficheiro |
-| GET | `/uploads/:file` | 🔒 (só header) | Só o dono. Ficheiros `profile-*` são públicos |
+| GET | `/uploads/:file` | 🔒 (só header) | Só o dono. Ficheiros `profile-*` e `vehicle-*` (fotos) são públicos |
 
 Os ficheiros são guardados como `<userId>-<uuid>.<ext>`, com a extensão derivada do tipo MIME validado.
 

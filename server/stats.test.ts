@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { consumptionL100, monthlyExpenses, predictiveRisk, vehicleRecommendations } from './stats';
 import { extractDate, extractTotal } from './services/ocrService';
+import { vehicleKind, imageScore, cleanAuthor } from './services/vehicleImage';
 import { updateVehicleSchema } from '@shared/schema';
 import type { Vehicle } from '@shared/schema';
 
@@ -51,6 +52,37 @@ test('OCR: datas portuguesas e totais com milhares', () => {
   assert.equal(extractDate('31/02/2024'), undefined);
   assert.equal(extractTotal('IVA 23% 2,30\nTOTAL 1.234,56 EUR'), 1234.56);
   assert.equal(extractTotal('Gasóleo 45,90'), 45.9);
+});
+
+test('tipo de veículo para a pesquisa de imagem', () => {
+  assert.equal(vehicleKind({ vehicleCategory: 'Mota', iucCategory: 'IUC' }), 'motorcycle');
+  assert.equal(vehicleKind({ vehicleCategory: 'Motociclo', iucCategory: null }), 'motorcycle');
+  assert.equal(vehicleKind({ vehicleCategory: '', iucCategory: 'Categoria E' }), 'motorcycle');
+  assert.equal(vehicleKind({ vehicleCategory: 'Ciclomotor' }), 'motorcycle');
+  assert.equal(vehicleKind({ vehicleCategory: 'Pesado de mercadorias' }), 'truck');
+  assert.equal(vehicleKind({ vehicleCategory: 'Ligeiro de mercadorias' }), 'van');
+  assert.equal(vehicleKind({ vehicleCategory: 'Ligeiro de passageiros', iucCategory: 'Categoria B' }), 'car');
+  assert.equal(vehicleKind({ vehicleCategory: 'Automóvel' }), 'car');
+});
+
+test('pontuação de fotos: ano, modelo sem hífen e cilindrada', () => {
+  const suzuki = { brand: 'Suzuki', model: 'GSXR', year: 2007, engineDisplacement: 599 };
+  const s2007 = imageScore('File:2007TMS Suzuki GSX-R 600.jpg', suzuki);
+  const s750 = imageScore('File:Suzuki GSX-R 750 2007-1.jpg', suzuki);
+  const s1992 = imageScore('File:1992 Suzuki GSXR-600W.jpg', suzuki);
+  assert.ok(s2007 > s750, 'a 600 de 2007 ganha à 750 de 2007');
+  assert.ok(s750 > s1992, 'o ano certo ganha a um modelo antigo');
+  assert.equal(imageScore('File:Suzuki Bandit 2007.jpg', suzuki), 0, 'sem o modelo no título não serve');
+  // Modelos curtos não podem coincidir com nomes de ficheiro de câmara
+  assert.equal(imageScore('File:DSC3456 Citroen 2019.jpg', { brand: 'Citroën', model: 'C3', year: 2019 }), 0);
+  assert.ok(imageScore('File:Citroën C3 (2019).jpg', { brand: 'Citroën', model: 'C3', year: 2019 }) >= 7);
+  assert.ok(imageScore('File:Yamaha MT-07 2021.jpg', { brand: 'Yamaha', model: 'MT07', year: 2021 }) >= 7);
+});
+
+test('créditos do Commons legíveis', () => {
+  assert.equal(cleanAuthor('No machine-readable author provided. Golden~commonswiki assumed (based on copyright claims).'), 'Golden');
+  assert.equal(cleanAuthor('<a href="x">Pawlex</a> (<a href="y">talk</a>)'), 'Pawlex');
+  assert.equal(cleanAuthor(''), 'Autor desconhecido');
 });
 
 test('PATCH de veículo não aceita userId nem id', () => {

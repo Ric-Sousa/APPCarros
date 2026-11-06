@@ -7,7 +7,7 @@ Aplicação web para gestão de veículos particulares: frota pessoal, manutenç
 | Área | O que faz | Fonte dos dados |
 |---|---|---|
 | Autenticação | Registo, login (JWT), perfil, foto de perfil, preferências | BD |
-| Veículos | CRUD, consulta de dados por matrícula, imagem automática | BD + serviço de matrículas + Unsplash |
+| Veículos | CRUD, consulta de dados por matrícula, foto automática ou à escolha (com o ano certo quando possível), foto própria | BD + serviço de matrículas + Wikimedia Commons + Unsplash |
 | Manutenção | Histórico, marcações, alertas, risco preditivo (óleo/pneus/inspeção) | BD |
 | Combustível | Abastecimentos (criar/editar/apagar), consumo, comparador de postos | BD + OpenStreetMap |
 | Despesas | Registo manual e OCR de recibos (imagem/PDF) | BD + Tesseract/pdf-parse |
@@ -78,7 +78,7 @@ O build não precisa da base de dados. Em produção, coloque o servidor atrás 
 | `PORT` | Não | Porta HTTP (por omissão `5000`) |
 | `CORS_ORIGINS` | Não | Origens permitidas, separadas por vírgulas |
 | `VEHICLE_API_URL` | Não | URL do `vehicle_api.php` (deve ser HTTPS) |
-| `UNSPLASH_ACCESS_KEY` | Não | Imagens automáticas dos veículos |
+| `UNSPLASH_ACCESS_KEY` | Não | Fotos do Unsplash nas sugestões (o Wikimedia Commons não precisa de chave) |
 | `OPENCHARGEMMAP_API_KEY` | Não | Postos de carregamento EV |
 | `OPENROUTESERVICE_API_KEY` | Não | Rotas e geocoding (sem chave: linha reta e Nominatim) |
 | `OPENWEATHER_API_KEY` | Não | Meteorologia nas recomendações |
@@ -116,7 +116,7 @@ server/
   storage.ts          Acesso a dados (Kysely); as consultas filtram pelo dono
   stats.ts            Cálculos puros: consumo, despesas, risco, recomendações
   iotGateway.ts       MQTT -> Socket.IO (com verificação de dono)
-  services/           APIs externas, OCR, specs, Unsplash, matrículas
+  services/           APIs externas, OCR, specs, fotos (Commons/Unsplash), matrículas
   *.test.ts           Testes
 shared/schema.ts        Esquema (única fonte das tabelas) + esquemas zod partilhados
 vehicle_api.php         Scraper PHP de dados por matrícula (alojado à parte)

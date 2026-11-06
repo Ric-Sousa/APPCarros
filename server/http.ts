@@ -93,9 +93,18 @@ function uploader(allowed: string[], maxMb: number, prefix: (req: Request) => st
 export const uploads = {
   document: uploader(['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], 10, (req) => userId(req)),
   receipt: uploader(['application/pdf', 'image/jpeg', 'image/png'], 10, (req) => userId(req)),
-  // Fotos de perfil são públicas (prefixo "profile-")
+  // Fotos de perfil e de veículos são públicas (prefixos "profile-" e "vehicle-"; o nome é um UUID)
   profile: uploader(['image/jpeg', 'image/png', 'image/webp'], 5, () => 'profile'),
+  vehiclePhoto: uploader(['image/jpeg', 'image/png', 'image/webp'], 5, () => 'vehicle'),
 };
+
+/** Apaga um ficheiro de uploads/ (aceita o URL /uploads/... ou só o nome). */
+export function removeUpload(fileUrl: string) {
+  fs.rm(path.join(UPLOAD_DIR, path.basename(fileUrl)), { force: true }, () => {});
+}
+
+/** Foto própria de veículo (as sugestões externas não são ficheiros nossos). */
+export const isOwnVehiclePhoto = (url?: string | null) => !!url && url.startsWith('/uploads/vehicle-');
 
 // ---------- Erros ----------
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {

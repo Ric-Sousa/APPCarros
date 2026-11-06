@@ -74,6 +74,20 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
               onError={() => setImageError(true)}
             />
           ) : null}
+
+          {/* Crédito obrigatório das fotos automáticas */}
+          {vehicle.imageUrl && !imageError && vehicle.imageCredit && (
+            <a
+              href={vehicle.imageCreditUrl ?? undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-1 right-1 max-w-[95%] truncate rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white/80 hover:text-white"
+              title={vehicle.imageCredit}
+            >
+              {vehicle.imageCredit}
+            </a>
+          )}
           
           {/* Fallback icon quando não há imagem ou falha ao carregar */}
           <div className={`absolute inset-0 flex items-center justify-center ${vehicle.imageUrl && !imageError ? 'hidden' : ''}`} id={`fallback-${vehicle.id}`}>

@@ -29,6 +29,9 @@ export const vehicles = mysqlTable("vehicles", {
   year: int("year").notNull(),
   registrationDate: datetime("registration_date"),
   imageUrl: text("image_url"),
+  // Crédito obrigatório das fotos automáticas (Wikimedia Commons / Unsplash)
+  imageCredit: text("image_credit"),
+  imageCreditUrl: text("image_credit_url"),
   fuelType: varchar("fuel_type", { length: 50 }),
   currentMileage: int("current_mileage").notNull(),
   

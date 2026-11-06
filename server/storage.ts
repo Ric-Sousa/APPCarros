@@ -8,7 +8,7 @@ import type {
   MaintenanceAppointment, NewMaintenanceAppointment, ChargingStationReservation, NewChargingStationReservation,
 } from '@shared/schema';
 import { db, tableName, toRow, fromRow, fromRows, withDefaults } from './db';
-import { getVehicleImage } from './services/unsplash';
+import { getVehicleImage } from './services/vehicleImage';
 import { consumptionL100, monthlyExpenses } from './stats';
 
 /** Utilizador sem o hash da password: é o único formato que sai para o cliente. */
@@ -102,8 +102,9 @@ export class Storage {
   }
 
   async createVehicle(vehicle: Omit<NewVehicle, 'id'>): Promise<Vehicle> {
-    const imageUrl = vehicle.imageUrl || await getVehicleImage(`${vehicle.brand} ${vehicle.model}`);
-    return insert<Vehicle>(schema.vehicles, { ...vehicle, imageUrl });
+    if (vehicle.imageUrl) return insert<Vehicle>(schema.vehicles, vehicle);
+    const image = await getVehicleImage(vehicle);
+    return insert<Vehicle>(schema.vehicles, { ...vehicle, imageUrl: image?.url ?? null, imageCredit: image?.credit ?? null, imageCreditUrl: image?.creditUrl ?? null });
   }
 
   async updateVehicle(id: string, data: Partial<NewVehicle>): Promise<Vehicle> {
