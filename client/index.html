@@ -3,24 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Logicar</title>
+    <title>LogiCar</title>
+    <meta name="description" content="Gestão de veículos: manutenção, combustível, despesas e documentos." />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Leaflet CSS -->
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-      crossorigin="anonymous"
-    />
   </head>
   <body>
     <script>
       // Apply saved theme preference as early as possible to avoid flash
       (function() {
         try {
-          var theme = localStorage.getItem('theme-preference');
+          var theme = (JSON.parse(localStorage.getItem('user-preferences') || '{}') || {}).theme;
           if (theme === 'dark') {
             document.documentElement.classList.add('dark');
           } else if (theme === 'light') {
@@ -40,11 +34,5 @@
     </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <!-- Leaflet JS -->
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin="anonymous"
-    ></script>
   </body>
 </html>

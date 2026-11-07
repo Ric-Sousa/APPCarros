@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Car, Shield, Settings, BarChart3, Eye, EyeOff } from "lucide-react";
+import { Link } from "wouter";
+import { post, handleApiError } from "@/lib/apiUtils";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -18,20 +20,12 @@ export default function Login() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await res.json();
-      if (res.ok && data.token) {
-        localStorage.setItem("token", data.token);
-        window.location.href = "/dashboard";
-      } else {
-        setError(data.message || "Login falhou");
-      }
-    } catch {
-      setError("Erro de rede ou servidor");
+      const data = await post<{ token: string }>("/login", { email, password });
+      localStorage.setItem("token", data.token);
+      window.location.href = "/dashboard";
+    } catch (err) {
+      // 429 → "Demasiadas tentativas…", 401 → "Credenciais inválidas." (mensagens do servidor)
+      setError(handleApiError(err, "Não foi possível entrar."));
     } finally {
       setLoading(false);
     }
@@ -40,7 +34,7 @@ export default function Login() {
   return (
     <div className="min-h-screen flex">
       {/* Left side - Hero Section */}
-      <div className="hidden lg:flex lg:flex-2 bg-gradient-to-br from-blue-900 via-blue-800 to-purple-900 relative overflow-hidden">
+      <div className="hidden lg:flex lg:flex-1 bg-gradient-to-br from-blue-900 via-blue-800 to-purple-900 relative overflow-hidden">
         <div className="absolute inset-0 bg-black/20"></div>
         <div className="relative z-10 flex flex-col justify-center px-12 text-white">
           <div className="mb-8">
@@ -82,7 +76,7 @@ export default function Login() {
               </div>
               <div>
                 <h3 className="font-semibold">Gestão Simplificada</h3>
-                <p className="text-blue-200 text-sm">Todos os dados em um só lugar</p>
+                <p className="text-blue-200 text-sm">Todos os dados num só lugar</p>
               </div>
             </div>
           </div>
@@ -95,23 +89,23 @@ export default function Login() {
       </div>
 
       {/* Right side - Login Form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-gray-50/50">
+      <div className="flex-1 flex items-center justify-center p-8 bg-muted/40">
         <div className="w-full max-w-md">
-          <Card className="shadow-2xl border-0 bg-white/80 backdrop-blur-sm">
+          <Card className="shadow-2xl border-0 bg-card/90 backdrop-blur-sm">
             <CardHeader className="text-center pb-2">
               <div className="flex justify-center mb-4 lg:hidden">
                 <div className="p-3 bg-blue-600 rounded-xl">
                   <Car className="w-8 h-8 text-white" />
                 </div>
               </div>
-              <h2 className="text-3xl font-bold text-gray-900">Bem-vindo</h2>
-              <p className="text-gray-600 mt-2">Aceda à sua conta Logicar</p>
+              <h2 className="text-3xl font-bold text-foreground">Bem-vindo</h2>
+              <p className="text-muted-foreground mt-2">Aceda à sua conta Logicar</p>
             </CardHeader>
             
             <CardContent className="space-y-6">
               {error && (
-                <Alert className="border-red-200 bg-red-50">
-                  <AlertDescription className="text-red-700">
+                <Alert className="border-destructive/50 bg-destructive/10">
+                  <AlertDescription className="text-destructive">
                     {error}
                   </AlertDescription>
                 </Alert>
@@ -119,22 +113,22 @@ export default function Login() {
               
               <form onSubmit={handleLogin} className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-medium text-gray-700">
+                  <Label htmlFor="email" className="text-sm font-medium text-foreground">
                     Email
                   </Label>
                   <Input
                     id="email"
                     type="email"
-                    placeholder="seu@email.com"
+                    placeholder="o.seu@email.pt"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
-                    className="h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500/20"
+                    className="h-12 focus:border-blue-500 focus:ring-blue-500/20"
                     required
                   />
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-medium text-gray-700">
+                  <Label htmlFor="password" className="text-sm font-medium text-foreground">
                                         Palavra-passe
 
                   </Label>
@@ -145,16 +139,16 @@ export default function Login() {
                       placeholder="••••••••"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      className="h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500/20 pr-12"
+                      className="h-12 focus:border-blue-500 focus:ring-blue-500/20 pr-12"
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       aria-label={showPassword ? "Ocultar palavra-passe" : "Mostrar palavra-passe"}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
                     >
-                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      {showPassword ? <EyeOff className="w-5 h-5" aria-hidden="true" /> : <Eye className="w-5 h-5" aria-hidden="true" />}
                     </button>
                   </div>
                 </div>
@@ -167,7 +161,7 @@ export default function Login() {
                   {loading ? (
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      Entrando...
+                      A entrar...
                     </div>
                   ) : (
                     "Entrar"
@@ -176,18 +170,18 @@ export default function Login() {
               </form>
               
               <div className="text-center pt-4">
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-muted-foreground">
                   Não tem uma conta?{" "}
-                  <a href="/register" className="font-medium text-blue-600 hover:text-blue-500 transition-colors">
+                  <Link href="/register" className="font-medium text-primary hover:underline">
                     Criar conta
-                  </a>
+                  </Link>
                 </p>
               </div>
             </CardContent>
           </Card>
           
-          <p className="text-center text-xs text-gray-500 mt-6">
-            © 2025 ;. Todos os direitos reservados.
+          <p className="text-center text-xs text-muted-foreground mt-6">
+            © LogiCar. Todos os direitos reservados.
           </p>
         </div>
       </div>

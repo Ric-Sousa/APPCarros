@@ -8,7 +8,8 @@ import { ZodError } from 'zod';
 import { verifyJwt, type JwtPayload } from './jwtUtils';
 import { storage } from './storage';
 import { isDuplicateKeyError } from './db';
-import type { Vehicle } from '@shared/schema';
+import rateLimit from 'express-rate-limit';
+import { OWN_VEHICLE_PHOTO, type Vehicle } from '@shared/schema';
 
 declare global {
   namespace Express {
@@ -98,13 +99,28 @@ export const uploads = {
   vehiclePhoto: uploader(['image/jpeg', 'image/png', 'image/webp'], 5, () => 'vehicle'),
 };
 
-/** Apaga um ficheiro de uploads/ (aceita o URL /uploads/... ou só o nome). */
+/** Apaga um ficheiro de uploads/. Só aceita URLs "/uploads/<nome simples>" (sem pastas nem ".."). */
 export function removeUpload(fileUrl: string) {
-  fs.rm(path.join(UPLOAD_DIR, path.basename(fileUrl)), { force: true }, () => {});
+  const match = /^\/uploads\/([A-Za-z0-9._-]+)$/.exec(fileUrl);
+  if (!match || match[1].startsWith('.')) return;
+  fs.rm(path.join(UPLOAD_DIR, match[1]), { force: true }, () => {});
 }
 
 /** Foto própria de veículo (as sugestões externas não são ficheiros nossos). */
-export const isOwnVehiclePhoto = (url?: string | null) => !!url && url.startsWith('/uploads/vehicle-');
+export const isOwnVehiclePhoto = (url?: string | null): url is string => !!url && OWN_VEHICLE_PHOTO.test(url);
+
+// ---------- Rate limit ----------
+/** Limite de pedidos por IP numa janela (15 min por omissão), com resposta JSON em pt-PT. */
+export function limiter(limit: number, what: string, windowMs = 15 * 60 * 1000, options: { skipSuccessfulRequests?: boolean } = {}) {
+  return rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: true,
+    legacyHeaders: false,
+    ...options,
+    message: { message: `Demasiadas ${what}. Tente novamente dentro de alguns minutos.` },
+  });
+}
 
 // ---------- Erros ----------
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
@@ -124,8 +140,12 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err?.type === 'entity.parse.failed') {
     return res.status(400).json({ message: 'JSON inválido' });
   }
+  // Erros HTTP de bibliotecas (ex.: express.static devolve 404 quando o ficheiro não existe)
+  if (typeof err?.status === 'number' && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ message: err.status === 404 ? 'Não encontrado' : 'Pedido inválido' });
+  }
   if (isDuplicateKeyError(err)) {
-    return res.status(409).json({ message: 'Já existe um registo com estes dados (por exemplo, a mesma matrícula).' });
+    return res.status(409).json({ message: 'Já existe um registo com estes dados.' });
   }
   console.error('Erro não tratado:', err);
   res.status(500).json({ message: 'Erro interno do servidor' });

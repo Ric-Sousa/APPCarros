@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
 
 const secret = process.env.JWT_SECRET;
-if (!secret) {
-  throw new Error('JWT_SECRET não está definido no .env. O servidor não arranca sem ele.');
+if (!secret || secret.length < 32) {
+  throw new Error('JWT_SECRET não está definido ou tem menos de 32 caracteres. O servidor não arranca sem ele.');
 }
 const JWT_SECRET: string = secret;
 const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || '1h') as jwt.SignOptions['expiresIn'];

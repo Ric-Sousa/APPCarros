@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { sql } from 'kysely';
 import type { Table } from 'drizzle-orm';
 import { getTableColumns } from 'drizzle-orm';
 import * as schema from '@shared/schema';
@@ -7,9 +8,9 @@ import type {
   MileageTrip, NewMileageTrip, ExpenseRecord, NewExpenseRecord, Document, NewDocument,
   MaintenanceAppointment, NewMaintenanceAppointment, ChargingStationReservation, NewChargingStationReservation,
 } from '@shared/schema';
-import { db, tableName, toRow, fromRow, fromRows, withDefaults } from './db';
+import { db, dbClient, tableName, toRow, fromRow, fromRows, withDefaults, isDuplicateKeyError } from './db';
 import { getVehicleImage } from './services/vehicleImage';
-import { consumptionL100, monthlyExpenses } from './stats';
+import { consumptionL100, monthlyExpenses, dueItems, alertId } from './stats';
 
 /** Utilizador sem o hash da password: é o único formato que sai para o cliente. */
 export type PublicUser = Omit<User, 'password'>;
@@ -37,6 +38,12 @@ async function update(table: Table, id: string, values: Values): Promise<void> {
   if (Object.keys(row).length) await db.updateTable(tableName(table)).set(row).where('id', '=', id).execute();
 }
 
+/** LIMIT n em todos os motores (o SQL Server usa TOP). */
+const limitRows = <Q extends { limit(n: number): Q; top(n: number): Q }>(query: Q, n: number): Q => (dbClient === 'mssql' ? query.top(n) : query.limit(n));
+
+/** Mínimo de outros veículos iguais para mostrar médias (abaixo disso as médias revelariam dados de pessoas concretas). */
+export const MIN_COMPARISON_GROUP = 5;
+
 const remove = (table: Table, id: string) => db.deleteFrom(tableName(table)).where('id', '=', id).execute();
 
 // Subconsulta: ids dos veículos de um utilizador
@@ -45,7 +52,7 @@ const userVehicleIds = (userId: string) => db.selectFrom('vehicles').select('id'
 // Tabelas com dados de um veículo (apagadas com ele; não há chaves estrangeiras para ser igual em todos os motores)
 const VEHICLE_CHILDREN = [
   schema.maintenanceRecords, schema.maintenanceAppointments, schema.alerts, schema.fuelRecords, schema.expenseRecords,
-  schema.documents, schema.mileageTrips, schema.tripRecords, schema.vehicleSpecs, schema.chargingStationReservations, schema.routePlans,
+  schema.documents, schema.mileageTrips, schema.chargingStationReservations, schema.routePlans,
 ];
 
 export class Storage {
@@ -77,6 +84,30 @@ export class Storage {
     await update(schema.users, id, { password: hashedPassword });
   }
 
+  /** Inclui o hash da password: usar só para verificações internas. */
+  async getUserWithPassword(id: string): Promise<User | undefined> {
+    return byId<User>(schema.users, id);
+  }
+
+  /** Apaga a conta e todos os dados. Devolve os URLs de ficheiros a apagar do disco. */
+  async deleteUser(userId: string): Promise<string[]> {
+    const user = await byId<User>(schema.users, userId);
+    const vehicles = await this.getUserVehicles(userId);
+    const files = (await Promise.all(vehicles.map((v) => this.vehicleFiles(v)))).flat();
+    if (user?.profileImageUrl?.startsWith('/uploads/')) files.push(user.profileImageUrl);
+    await db.transaction().execute(async (trx) => {
+      for (const v of vehicles) {
+        for (const table of VEHICLE_CHILDREN) await trx.deleteFrom(tableName(table)).where('vehicle_id', '=', v.id).execute();
+      }
+      await trx.deleteFrom('vehicles').where('user_id', '=', userId).execute();
+      for (const t of ['route_plans', 'maintenance_appointments', 'charging_station_reservations', 'user_preferences']) {
+        await trx.deleteFrom(t).where('user_id', '=', userId).execute();
+      }
+      await trx.deleteFrom('users').where('id', '=', userId).execute();
+    });
+    return files;
+  }
+
   async getPreferences(userId: string): Promise<unknown | undefined> {
     const row = await selectAll(schema.userPreferences).where('user_id', '=', userId).executeTakeFirst();
     return fromRow<{ data: unknown }>(schema.userPreferences, row)?.data;
@@ -84,9 +115,15 @@ export class Storage {
 
   async setPreferences(userId: string, data: unknown) {
     const row = toRow(schema.userPreferences, { data, updatedAt: new Date() });
-    const updated = await db.updateTable('user_preferences').set(row).where('user_id', '=', userId).executeTakeFirst();
-    if (Number(updated.numUpdatedRows) === 0) {
-      await db.insertInto('user_preferences').values({ ...row, user_id: userId }).execute();
+    try {
+      await db.transaction().execute(async (trx) => {
+        const updated = await trx.updateTable('user_preferences').set(row).where('user_id', '=', userId).executeTakeFirst();
+        if (Number(updated.numUpdatedRows) === 0) await trx.insertInto('user_preferences').values({ ...row, user_id: userId }).execute();
+      });
+    } catch (error) {
+      // Dois pedidos em simultâneo: o outro criou a linha primeiro; basta atualizar
+      if (!isDuplicateKeyError(error)) throw error;
+      await db.updateTable('user_preferences').set(row).where('user_id', '=', userId).execute();
     }
   }
 
@@ -110,6 +147,22 @@ export class Storage {
   async updateVehicle(id: string, data: Partial<NewVehicle>): Promise<Vehicle> {
     await update(schema.vehicles, id, data);
     return (await byId<Vehicle>(schema.vehicles, id))!;
+  }
+
+  /** Ficheiros do veículo em uploads/ (documentos, recibos e foto própria). */
+  async vehicleFiles(vehicle: Vehicle): Promise<string[]> {
+    const [docs, receipts] = await Promise.all([
+      db.selectFrom('documents').select('file_url').where('vehicle_id', '=', vehicle.id).execute(),
+      db.selectFrom('expense_records').select('receipt_url').where('vehicle_id', '=', vehicle.id).where('receipt_url', 'is not', null).execute(),
+    ]);
+    const urls = [...docs.map((d) => d.file_url), ...receipts.map((r) => r.receipt_url), vehicle.imageUrl];
+    return urls.filter((u): u is string => typeof u === 'string' && u.startsWith('/uploads/'));
+  }
+
+  /** Quantos veículos usam esta foto (as sugestões podem repetir-se; a foto própria só se apaga se ninguém a usar). */
+  async photoUsage(imageUrl: string): Promise<number> {
+    const rows = await db.selectFrom('vehicles').select('id').where('image_url', '=', imageUrl).execute();
+    return rows.length;
   }
 
   async deleteVehicle(id: string) {
@@ -140,6 +193,17 @@ export class Storage {
     return insert<MaintenanceAppointment>(schema.maintenanceAppointments, appointment);
   }
 
+  async getUserAppointments(userId: string) {
+    return fromRows<MaintenanceAppointment>(schema.maintenanceAppointments, await selectAll(schema.maintenanceAppointments)
+      .where('user_id', '=', userId).orderBy('scheduled_date', 'asc').execute());
+  }
+
+  /** Últimas manutenções de todos os veículos do utilizador. */
+  async getUserMaintenance(userId: string, limit: number) {
+    return fromRows<MaintenanceRecord>(schema.maintenanceRecords, await limitRows(selectAll(schema.maintenanceRecords)
+      .where('vehicle_id', 'in', userVehicleIds(userId)).orderBy('performed_at', 'desc'), limit).execute());
+  }
+
   /** Devolve undefined se a marcação não existir ou não for do utilizador. */
   async updateMaintenanceAppointment(id: string, userId: string, data: Partial<NewMaintenanceAppointment>) {
     const existing = await selectAll(schema.maintenanceAppointments).where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
@@ -163,6 +227,11 @@ export class Storage {
     return insert<ChargingStationReservation>(schema.chargingStationReservations, reservation);
   }
 
+  async getUserReservations(userId: string) {
+    return fromRows<ChargingStationReservation>(schema.chargingStationReservations, await selectAll(schema.chargingStationReservations)
+      .where('user_id', '=', userId).orderBy('reservation_date', 'asc').execute());
+  }
+
   async updateChargingStationReservation(id: string, userId: string, data: Partial<NewChargingStationReservation>) {
     const existing = await selectAll(schema.chargingStationReservations).where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
     if (!existing) return undefined;
@@ -180,6 +249,39 @@ export class Storage {
     return fromRows<Alert>(schema.alerts, await selectAll(schema.alerts)
       .where('vehicle_id', 'in', userVehicleIds(userId)).where('is_dismissed', '=', false)
       .orderBy('created_at', 'desc').execute());
+  }
+
+  /**
+   * Alertas gerados a partir dos dados de cada veículo (óleo e pneus por km; inspeção, IUC e seguro por data).
+   * O id é estável por prazo, por isso um alerta descartado continua descartado até o prazo mudar.
+   * ponytail: corre em cada pedido de alertas/estatísticas; passar para uma tarefa periódica se houver muitos veículos
+   */
+  async syncAlerts(userId: string) {
+    const vehicles = await this.getUserVehicles(userId);
+    const wanted = new Map<string, Values>();
+    for (const v of vehicles) {
+      for (const item of dueItems(v)) {
+        wanted.set(alertId(v.id, item), {
+          vehicleId: v.id, type: item.kind, title: item.title, description: item.description,
+          dueDate: item.dueDate, dueMileage: item.dueMileage, priority: item.urgency,
+        });
+      }
+    }
+    const existing = new Set((await db.selectFrom('alerts').select('id').where('vehicle_id', 'in', userVehicleIds(userId)).execute()).map((r) => r.id as string));
+    const stale = [...existing].filter((id) => !wanted.has(id));
+    if (stale.length) await db.deleteFrom('alerts').where('id', 'in', stale).execute();
+    for (const [id, alert] of wanted) {
+      if (existing.has(id)) {
+        // o texto muda com o tempo ("em 9 dias" -> "em 8 dias"); lido/descartado mantém-se
+        await db.updateTable('alerts').set(toRow(schema.alerts, { title: alert.title, description: alert.description, priority: alert.priority })).where('id', '=', id).execute();
+      } else {
+        try {
+          await db.insertInto('alerts').values(toRow(schema.alerts, withDefaults(schema.alerts, { ...alert, id }))).execute();
+        } catch (error) {
+          if (!isDuplicateKeyError(error)) throw error; // outro pedido em paralelo já o criou
+        }
+      }
+    }
   }
 
   async updateUserAlert(id: string, userId: string, data: { isRead?: boolean; isDismissed?: boolean }): Promise<boolean> {
@@ -263,9 +365,10 @@ export class Storage {
   }
 
   // ---------- Viagens (quilometragem) ----------
-  async getUserMileageTrips(userId: string, vehicleId?: string) {
+  async getUserMileageTrips(userId: string, vehicleId?: string, status?: string) {
     let query = selectAll(schema.mileageTrips).where('vehicle_id', 'in', userVehicleIds(userId));
     if (vehicleId) query = query.where('vehicle_id', '=', vehicleId);
+    if (status) query = query.where('status', '=', status);
     return fromRows<MileageTrip>(schema.mileageTrips, await query.orderBy('created_at', 'desc').execute());
   }
 
@@ -321,15 +424,20 @@ export class Storage {
   /** Compara o veículo com os veículos da mesma marca/modelo de todos os utilizadores (só médias agregadas). */
   async getVehicleComparison(vehicle: Vehicle) {
     // ponytail: estatísticas veículo a veículo; passar para uma agregação SQL se houver milhares de veículos iguais
-    const similar = await db.selectFrom('vehicles').select('id')
-      .where('brand', '=', vehicle.brand).where('model', '=', vehicle.model).execute();
-    const stats = await Promise.all(similar.map(async (s) => ({ id: s.id as string, ...(await this.vehicleStats(s.id)) })));
-    const mine = stats.find((s) => s.id === vehicle.id) ?? { consumption: null, monthly: 0 };
+    const similar = await limitRows(db.selectFrom('vehicles').select('id')
+      .where(sql`lower(brand)`, '=', vehicle.brand.toLowerCase())
+      .where(sql`lower(model)`, '=', vehicle.model.toLowerCase())
+      .where('id', '!=', vehicle.id), 200).execute();
+    const mine = { id: vehicle.id, ...(await this.vehicleStats(vehicle.id)) };
+    // Com poucos veículos iguais, as médias revelariam os dados de outras pessoas: não se calculam
+    const enough = similar.length >= MIN_COMPARISON_GROUP;
+    const others = enough ? await Promise.all(similar.map(async (s) => ({ id: s.id as string, ...(await this.vehicleStats(s.id as string)) }))) : [];
+    const stats = [mine, ...others];
     const withConsumption = stats.filter((s) => s.consumption != null);
     const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 100) / 100 : undefined);
 
-    const averageConsumption = avg(withConsumption.map((s) => s.consumption!));
-    const averageExpenses = avg(stats.map((s) => s.monthly));
+    const averageConsumption = enough ? avg(withConsumption.map((s) => s.consumption!)) : undefined;
+    const averageExpenses = enough ? avg(stats.map((s) => s.monthly)) : undefined;
     const recommendations: string[] = [];
     if (mine.consumption != null && averageConsumption != null && mine.consumption > averageConsumption * 1.1) {
       recommendations.push('O consumo está mais de 10% acima da média de veículos iguais: verifique pneus, filtros e estilo de condução.');
@@ -347,10 +455,10 @@ export class Storage {
       averageConsumption,
       userExpenses: mine.monthly,
       averageExpenses,
-      rankingPosition: mine.consumption != null
+      rankingPosition: enough && mine.consumption != null
         ? withConsumption.filter((s) => s.consumption! < mine.consumption!).length + 1
         : undefined,
-      totalSimilarVehicles: stats.length,
+      totalSimilarVehicles: similar.length,
       recommendations,
     };
   }

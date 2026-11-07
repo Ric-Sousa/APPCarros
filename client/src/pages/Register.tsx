@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Car, Shield, Settings, BarChart3, Eye, EyeOff, User, Mail, Lock } from "lucide-react";
+import { Link } from "wouter";
+import { post, handleApiError } from "@/lib/apiUtils";
 
 export default function Register() {
   const [name, setName] = useState("");
@@ -37,30 +39,12 @@ export default function Register() {
     }
 
     try {
-      const res = await fetch("/api/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password })
-      });
-      
-      const data = await res.json();
-      
-      if (res.ok) {
-        setSuccess("Conta criada com sucesso! Redirecionando...");
-        // Aguardar um pouco antes de redirecionar
-        setTimeout(() => {
-          if (data.token) {
-            localStorage.setItem("token", data.token);
-            window.location.href = "/dashboard";
-          } else {
-            window.location.href = "/login";
-          }
-        }, 2000);
-      } else {
-        setError(data.message || "Erro ao criar conta");
-      }
-    } catch {
-      setError("Erro de rede ou servidor");
+      const data = await post<{ token: string }>("/api/register", { name, email, password });
+      localStorage.setItem("token", data.token);
+      setSuccess("Conta criada com sucesso! A abrir o dashboard...");
+      window.location.href = "/dashboard";
+    } catch (err) {
+      setError(handleApiError(err, "Erro ao criar a conta."));
     } finally {
       setLoading(false);
     }
@@ -131,31 +115,31 @@ export default function Register() {
       </div>
 
       {/* Right side - Register Form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-gray-50/50">
+      <div className="flex-1 flex items-center justify-center p-8 bg-muted/40">
         <div className="w-full max-w-md">
-          <Card className="shadow-2xl border-0 bg-white/80 backdrop-blur-sm">
+          <Card className="shadow-2xl border-0 bg-card/90 backdrop-blur-sm">
             <CardHeader className="text-center pb-2">
               <div className="flex justify-center mb-4 lg:hidden">
                 <div className="p-3 bg-green-600 rounded-xl">
                   <Car className="w-8 h-8 text-white" />
                 </div>
               </div>
-              <h2 className="text-3xl font-bold text-gray-900">Criar Conta</h2>
-              <p className="text-gray-600 mt-2">Comece a gerir os seus veículos hoje</p>
+              <h2 className="text-3xl font-bold text-foreground">Criar Conta</h2>
+              <p className="text-muted-foreground mt-2">Comece a gerir os seus veículos hoje</p>
             </CardHeader>
             
             <CardContent className="space-y-6">
               {error && (
-                <Alert className="border-red-200 bg-red-50">
-                  <AlertDescription className="text-red-700">
+                <Alert className="border-destructive/50 bg-destructive/10">
+                  <AlertDescription className="text-destructive">
                     {error}
                   </AlertDescription>
                 </Alert>
               )}
               
               {success && (
-                <Alert className="border-green-200 bg-green-50">
-                  <AlertDescription className="text-green-700">
+                <Alert className="border-green-300 bg-green-50 dark:border-green-900 dark:bg-green-950/40">
+                  <AlertDescription className="text-green-800 dark:text-green-300">
                     {success}
                   </AlertDescription>
                 </Alert>
@@ -163,102 +147,102 @@ export default function Register() {
               
               <form onSubmit={handleRegister} className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-sm font-medium text-gray-700">
+                  <Label htmlFor="name" className="text-sm font-medium text-foreground">
                     Nome Completo
                   </Label>
                   <div className="relative">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
                       id="name"
                       type="text"
                       placeholder="Seu nome completo"
                       value={name}
                       onChange={e => setName(e.target.value)}
-                      className="h-12 pl-10 border-gray-200 focus:border-green-500 focus:ring-green-500/20"
+                      className="h-12 pl-10 focus:border-green-500 focus:ring-green-500/20"
                       required
                     />
                   </div>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-medium text-gray-700">
+                  <Label htmlFor="email" className="text-sm font-medium text-foreground">
                     Email
                   </Label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
                       id="email"
                       type="email"
                       placeholder="seu@email.com"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      className="h-12 pl-10 border-gray-200 focus:border-green-500 focus:ring-green-500/20"
+                      className="h-12 pl-10 focus:border-green-500 focus:ring-green-500/20"
                       required
                     />
                   </div>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-medium text-gray-700">
+                  <Label htmlFor="password" className="text-sm font-medium text-foreground">
                                         Palavra-passe
 
                   </Label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
                       id="password"
                       type={showPassword ? "text" : "password"}
                       placeholder="••••••••"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      className="h-12 pl-10 pr-12 border-gray-200 focus:border-green-500 focus:ring-green-500/20"
+                      className="h-12 pl-10 pr-12 focus:border-green-500 focus:ring-green-500/20"
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       aria-label={showPassword ? "Ocultar palavra-passe" : "Mostrar palavra-passe"}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
                     >
-                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      {showPassword ? <EyeOff className="w-5 h-5" aria-hidden="true" /> : <Eye className="w-5 h-5" aria-hidden="true" />}
                     </button>
                   </div>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="confirmPassword" className="text-sm font-medium text-gray-700">
+                  <Label htmlFor="confirmPassword" className="text-sm font-medium text-foreground">
                                         Confirmar Palavra-passe
 
                   </Label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
                       id="confirmPassword"
                       type={showConfirmPassword ? "text" : "password"}
                       placeholder="••••••••"
                       value={confirmPassword}
                       onChange={e => setConfirmPassword(e.target.value)}
-                      className="h-12 pl-10 pr-12 border-gray-200 focus:border-green-500 focus:ring-green-500/20"
+                      className="h-12 pl-10 pr-12 focus:border-green-500 focus:ring-green-500/20"
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                       aria-label={showConfirmPassword ? "Ocultar palavra-passe" : "Mostrar palavra-passe"}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
                     >
-                      {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      {showConfirmPassword ? <EyeOff className="w-5 h-5" aria-hidden="true" /> : <Eye className="w-5 h-5" aria-hidden="true" />}
                     </button>
                   </div>
                 </div>
                 
-                <div className="text-xs text-gray-600 bg-gray-50 p-3 rounded-lg">
+                <div className="text-xs text-muted-foreground bg-muted p-3 rounded-lg">
                   <p>A palavra-passe deve conter:</p>
                   <ul className="list-disc list-inside mt-1 space-y-1">
-                    <li className={password.length >= 6 ? "text-green-600" : ""}>
+                    <li className={password.length >= 6 ? "text-green-700 dark:text-green-400" : ""}>
                       Pelo menos 6 caracteres
                     </li>
-                    <li className={password === confirmPassword && password ? "text-green-600" : ""}>
+                    <li className={password === confirmPassword && password ? "text-green-700 dark:text-green-400" : ""}>
                       Confirmação deve coincidir
                     </li>
                   </ul>
@@ -281,27 +265,24 @@ export default function Register() {
               </form>
               
               <div className="text-center pt-4">
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-muted-foreground">
                   Já tem uma conta?{" "}
-                  <a href="/login" className="font-medium text-green-600 hover:text-green-500 transition-colors">
+                  <Link href="/login" className="font-medium text-green-700 dark:text-green-400 hover:underline">
                     Entrar
-                  </a>
+                  </Link>
                 </p>
               </div>
               
               <div className="text-center">
-                <p className="text-xs text-gray-500">
-                  Ao criar uma conta, aceita os nossos{" "}
-                  <a href="#" className="text-green-600 hover:underline">Termos de Serviço</a>
-                  {" "}e{" "}
-                  <a href="#" className="text-green-600 hover:underline">Política de Privacidade</a>
+                <p className="text-xs text-muted-foreground">
+                  Os seus dados são usados apenas para gerir os seus veículos e pode eliminar a conta a qualquer momento no Perfil.
                 </p>
               </div>
             </CardContent>
           </Card>
           
-          <p className="text-center text-xs text-gray-500 mt-6">
-            © 2025 Logicar. Todos os direitos reservados.
+          <p className="text-center text-xs text-muted-foreground mt-6">
+            © LogiCar. Todos os direitos reservados.
           </p>
         </div>
       </div>

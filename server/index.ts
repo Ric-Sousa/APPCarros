@@ -1,8 +1,11 @@
 import 'dotenv/config';
 
+// Todas as datas em UTC, em todos os motores de BD (mysql2 e pg usam a hora local do processo)
+process.env.TZ = 'UTC';
+
 // Validar o ambiente antes de carregar o resto (jwtUtils e db leem process.env ao importar)
-if (!process.env.JWT_SECRET) {
-  console.error('❌ JWT_SECRET não está definido. Veja o .env.example.');
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error('❌ JWT_SECRET não está definido ou tem menos de 32 caracteres. Veja o .env.example.');
   process.exit(1);
 }
 
@@ -13,23 +16,36 @@ const { default: path } = await import('path');
 const { registerRoutes } = await import('./routes');
 const { errorHandler, HttpError } = await import('./http');
 const { initIoTGateway } = await import('./iotGateway');
-const { setupDatabase, dbClient } = await import('./db');
+const { setupDatabase, closeDatabase, dbClient } = await import('./db');
 
 const app = express();
 app.disable('x-powered-by');
+// Atrás de um proxy (nginx, plataforma de alojamento), o IP real vem no X-Forwarded-For.
+// Sem isto, o rate limit trata todos os clientes como um só. Valores: true, número de proxies, ou lista de IPs.
+const trustProxy = process.env.TRUST_PROXY;
+if (trustProxy) app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true' ? true : trustProxy);
 
 const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5000,https://www.logicar.pt,https://logicar.pt')
   .split(',').map((o) => o.trim()).filter(Boolean);
 
-app.use(cors({
-  // Pedidos sem Origin (mesma origem, curl, apps) são permitidos
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new HttpError(403, 'Origem não permitida'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+/** Origem permitida: sem Origin (curl, apps), na lista CORS_ORIGINS, ou a própria app (ex.: acesso por IP na rede local). */
+const isAllowedOrigin = (origin: string | undefined, host: string | undefined) => {
+  if (!origin || allowedOrigins.includes(origin)) return true;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+};
+
+app.use(cors((req, callback) => {
+  if (!isAllowedOrigin(req.headers.origin, req.headers.host)) return callback(new HttpError(403, 'Origem não permitida'));
+  callback(null, {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  });
 }));
 
 app.use((_req, res, next) => {
@@ -78,9 +94,25 @@ if (process.env.NODE_ENV === 'production') {
 
 app.use(errorHandler);
 
-initIoTGateway({ httpServer: server, allowedOrigins });
+const iot = initIoTGateway({ httpServer: server, isAllowedOrigin });
 
 const port = parseInt(process.env.PORT || '5000', 10);
 server.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Servidor a correr na porta ${port}`);
 });
+
+// Encerramento ordenado (deploys, Ctrl+C): deixa terminar os pedidos e fecha as ligações
+let closing = false;
+async function shutdown(signal: string) {
+  if (closing) return;
+  closing = true;
+  console.log(`${signal} recebido: a encerrar...`);
+  setTimeout(() => process.exit(1), 10_000).unref();
+  iot.mqttClient?.end();
+  await new Promise((resolve) => iot.io.close(() => resolve(null)));
+  await new Promise((resolve) => server.close(() => resolve(null)));
+  await closeDatabase().catch(() => {});
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

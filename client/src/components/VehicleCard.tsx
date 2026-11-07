@@ -1,6 +1,8 @@
 import type { Vehicle } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Car, Droplet, CircleDot, Calendar } from "lucide-react";
+import { fuelLabel } from "@shared/fuel";
+import { daysUntil, formatDate, formatNumber } from "@/lib/utils";
 import { Link } from "wouter";
 import { useState } from "react";
 
@@ -14,23 +16,22 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
   
   // Calculate maintenance progress percentages
   const calculateOilProgress = () => {
-    if (!vehicle.lastOilChangeMileage || !vehicle.oilChangeInterval) return 0;
+    if (vehicle.lastOilChangeMileage == null || !vehicle.oilChangeInterval) return 0;
     const kmsSinceLastChange = vehicle.currentMileage - vehicle.lastOilChangeMileage;
     return Math.min((kmsSinceLastChange / vehicle.oilChangeInterval) * 100, 100);
   };
 
   const calculateTireProgress = () => {
-    if (!vehicle.lastTireChangeMileage || !vehicle.tireChangeInterval) return 0;
+    if (vehicle.lastTireChangeMileage == null || !vehicle.tireChangeInterval) return 0;
     const kmsSinceLastChange = vehicle.currentMileage - vehicle.lastTireChangeMileage;
     return Math.min((kmsSinceLastChange / vehicle.tireChangeInterval) * 100, 100);
   };
 
   const calculateInspectionProgress = () => {
-    if (!vehicle.inspectionDue) return 0;
-    const now = new Date();
-    const dueDate = new Date(vehicle.inspectionDue);
-    const totalDays = 365; // Assume 1 year inspection cycle
-    const daysLeft = Math.max(0, Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+    const days = daysUntil(vehicle.inspectionDue);
+    if (days === null) return 0;
+    const totalDays = 365; // ciclo anual de inspeção
+    const daysLeft = Math.max(0, days);
     return Math.min(((totalDays - daysLeft) / totalDays) * 100, 100);
   };
 
@@ -91,7 +92,7 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
           
           {/* Fallback icon quando não há imagem ou falha ao carregar */}
           <div className={`absolute inset-0 flex items-center justify-center ${vehicle.imageUrl && !imageError ? 'hidden' : ''}`} id={`fallback-${vehicle.id}`}>
-            <Car className="w-16 h-16 text-primary/30" />
+            <Car className="w-16 h-16 text-primary/30" aria-hidden="true" />
           </div>
           
           {/* Status Badge */}
@@ -112,8 +113,8 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
           </div>
         </div>
 
-        <div className="p-6">
-          <div className="flex items-center justify-between mb-4">
+        <div className="p-4 sm:p-6">
+          <div className="flex items-start justify-between gap-3 mb-4">
             <div>
               <h3 className="font-semibold text-lg text-foreground" data-testid={`text-vehicle-name-${vehicle.id}`}>
                 {vehicle.brand} {vehicle.model}
@@ -133,7 +134,7 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
                 <div>
                   <p className="text-sm text-muted-foreground">Combustível</p>
                   <p className="font-medium text-sm text-foreground" data-testid={`text-fuel-type-${vehicle.id}`}>
-                    {vehicle.fuelType}
+                    {fuelLabel(vehicle.fuelType)}
                   </p>
                 </div>
               )}
@@ -146,10 +147,7 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
               <div className="flex justify-between items-center mb-2">
                 <span className="text-sm font-medium text-foreground">Óleo do Motor</span>
                 <span className="text-xs text-muted-foreground">
-                  Próxima: {vehicle.lastOilChangeMileage ? 
-                    (vehicle.lastOilChangeMileage + (vehicle.oilChangeInterval || 15000)).toLocaleString() : 
-                    'N/A'
-                  } km
+                  {vehicle.lastOilChangeMileage != null ? `Próxima: ${formatNumber(vehicle.lastOilChangeMileage + (vehicle.oilChangeInterval || 15000))} km` : 'Sem registo'}
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-2">
@@ -164,10 +162,7 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
               <div className="flex justify-between items-center mb-2">
                 <span className="text-sm font-medium text-foreground">Pneus</span>
                 <span className="text-xs text-muted-foreground">
-                  Próxima: {vehicle.lastTireChangeMileage ? 
-                    (vehicle.lastTireChangeMileage + (vehicle.tireChangeInterval || 50000)).toLocaleString() : 
-                    'N/A'
-                  } km
+                  {vehicle.lastTireChangeMileage != null ? `Próxima: ${formatNumber(vehicle.lastTireChangeMileage + (vehicle.tireChangeInterval || 50000))} km` : 'Sem registo'}
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-2">
@@ -182,10 +177,7 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
               <div className="flex justify-between items-center mb-2">
                 <span className="text-sm font-medium text-foreground">Inspeção</span>
                 <span className="text-xs text-muted-foreground">
-                  {vehicle.inspectionDue ? 
-                    new Date(vehicle.inspectionDue).toLocaleDateString('pt-PT') : 
-                    'N/A'
-                  }
+                  {formatDate(vehicle.inspectionDue, 'Sem data')}
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-2">

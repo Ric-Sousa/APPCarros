@@ -5,6 +5,8 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Calculator, Fuel, TrendingUp, TrendingDown, Target } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { formatEuro, formatNumber } from '@/lib/utils';
 
 interface CalculatorResult {
   consumption: number;
@@ -14,6 +16,7 @@ interface CalculatorResult {
 }
 
 const FuelEfficiencyCalculator: React.FC = () => {
+  const { toast } = useToast();
   const [distance, setDistance] = useState<number>(0);
   const [fuelUsed, setFuelUsed] = useState<number>(0);
   const [fuelCost, setFuelCost] = useState<number>(1.65);
@@ -22,7 +25,7 @@ const FuelEfficiencyCalculator: React.FC = () => {
 
   const calculateEfficiency = () => {
     if (distance <= 0 || fuelUsed <= 0) {
-      alert('Por favor, insira valores válidos para distância e combustível.');
+      toast({ title: 'Valores inválidos', description: 'Indique a distância e o combustível gasto.', variant: 'destructive' });
       return;
     }
 
@@ -47,20 +50,20 @@ const FuelEfficiencyCalculator: React.FC = () => {
 
   const getEfficiencyColor = (efficiency: string) => {
     switch (efficiency) {
-      case 'excellent': return 'text-green-600 bg-green-50 border-green-200';
-      case 'good': return 'text-blue-600 bg-blue-50 border-blue-200';
-      case 'average': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-      case 'poor': return 'text-red-600 bg-red-50 border-red-200';
-      default: return 'text-gray-600 bg-gray-50 border-gray-200';
+      case 'excellent': return 'text-green-700 bg-green-50 border-green-200 dark:text-green-400 dark:bg-green-900/20 dark:border-green-800';
+      case 'good': return 'text-blue-700 bg-blue-50 border-blue-200 dark:text-blue-400 dark:bg-blue-900/20 dark:border-blue-800';
+      case 'average': return 'text-yellow-700 bg-yellow-50 border-yellow-200 dark:text-yellow-400 dark:bg-yellow-900/20 dark:border-yellow-800';
+      case 'poor': return 'text-red-700 bg-red-50 border-red-200 dark:text-red-400 dark:bg-red-900/20 dark:border-red-800';
+      default: return 'text-muted-foreground bg-muted border-border';
     }
   };
 
   const getEfficiencyIcon = (efficiency: string) => {
     switch (efficiency) {
-      case 'excellent': return <TrendingDown className="h-5 w-5 text-green-600" />;
-      case 'good': return <Target className="h-5 w-5 text-blue-600" />;
-      case 'average': return <TrendingUp className="h-5 w-5 text-yellow-600" />;
-      case 'poor': return <TrendingUp className="h-5 w-5 text-red-600" />;
+      case 'excellent': return <TrendingDown className="h-5 w-5 text-green-600 dark:text-green-400" aria-hidden="true" />;
+      case 'good': return <Target className="h-5 w-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />;
+      case 'average': return <TrendingUp className="h-5 w-5 text-yellow-600 dark:text-yellow-400" aria-hidden="true" />;
+      case 'poor': return <TrendingUp className="h-5 w-5 text-red-600 dark:text-red-400" aria-hidden="true" />;
       default: return <Calculator className="h-5 w-5" />;
     }
   };
@@ -142,7 +145,7 @@ const FuelEfficiencyCalculator: React.FC = () => {
           <div className="space-y-2">
             <Label htmlFor="fuelType">Tipo de Combustível</Label>
             <Select value={fuelType} onValueChange={setFuelType}>
-              <SelectTrigger>
+              <SelectTrigger id="fuelType">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -170,8 +173,8 @@ const FuelEfficiencyCalculator: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <Fuel className="h-5 w-5 text-blue-500" />
                     <div>
-                      <p className="text-sm text-gray-600">Consumo</p>
-                      <p className="text-xl font-bold">{result.consumption.toFixed(1)} L/100km</p>
+                      <p className="text-sm text-muted-foreground">Consumo</p>
+                      <p className="text-xl font-bold">{formatNumber(result.consumption, 1)} L/100 km</p>
                     </div>
                   </div>
                 </CardContent>
@@ -180,10 +183,10 @@ const FuelEfficiencyCalculator: React.FC = () => {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-2">
-                    <TrendingUp className="h-5 w-5 text-green-500" />
+                    <TrendingUp className="h-5 w-5 text-green-500" aria-hidden="true" />
                     <div>
-                      <p className="text-sm text-gray-600">Custo/100km</p>
-                      <p className="text-xl font-bold">€{result.costPer100km.toFixed(2)}</p>
+                      <p className="text-sm text-muted-foreground">Custo/100km</p>
+                      <p className="text-xl font-bold">{formatEuro(result.costPer100km)}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -192,10 +195,10 @@ const FuelEfficiencyCalculator: React.FC = () => {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-2">
-                    <Target className="h-5 w-5 text-purple-500" />
+                    <Target className="h-5 w-5 text-purple-500" aria-hidden="true" />
                     <div>
-                      <p className="text-sm text-gray-600">Custo/km</p>
-                      <p className="text-xl font-bold">€{result.costPerKm.toFixed(3)}</p>
+                      <p className="text-sm text-muted-foreground">Custo/km</p>
+                      <p className="text-xl font-bold">{formatNumber(result.costPerKm, 3)} €</p>
                     </div>
                   </div>
                 </CardContent>
@@ -239,8 +242,8 @@ const FuelEfficiencyCalculator: React.FC = () => {
                     <h4 className="font-medium text-sm">Dicas para melhorar a eficiência:</h4>
                     <ul className="space-y-1">
                       {getFuelTypeRecommendations(fuelType).tips.map((tip, index) => (
-                        <li key={index} className="text-sm text-gray-600 flex items-center gap-2">
-                          <span className="w-1 h-1 bg-gray-400 rounded-full"></span>
+                        <li key={index} className="text-sm text-muted-foreground flex items-center gap-2">
+                          <span className="w-1 h-1 bg-muted-foreground rounded-full"></span>
                           {tip}
                         </li>
                       ))}

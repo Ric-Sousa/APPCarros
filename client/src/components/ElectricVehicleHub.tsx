@@ -1,583 +1,212 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Battery, BatteryCharging, Loader2, MapPin, Route, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Progress } from './ui/progress';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
 import ChargingStationReservationModal from './ChargingStationReservationModal';
-import EVComparisonCalculator from './EVComparisonCalculator';
-import { 
-  Zap, 
-  Battery, 
-  MapPin, 
-  Calculator, 
-  TrendingDown,
-  TrendingUp,
-  Leaf,
-  Euro,
-  Clock,
-  Route
-} from 'lucide-react';
+import ChargingReservationsList from './ChargingReservationsList';
 import { useToast } from '@/hooks/use-toast';
-import { get, post } from '@/lib/apiUtils';
+import { get, handleApiError } from '@/lib/apiUtils';
+import { useDebounced } from '@/hooks/useVehicleSpecs';
+import { formatNumber } from '@/lib/utils';
 
-interface ChargingStation {
+/** Posto devolvido por /api/charging-stations (OpenChargeMap). */
+export interface ChargingStation {
   id: string;
   name: string;
   address: string;
+  lat: number;
+  lng: number;
   distance: number;
-  power: number; // kW
   connectorTypes: string[];
-  price: number; // €/kWh
-  availability: 'available' | 'occupied' | 'out_of_service';
+  power: number;
+  available: number;
+  total: number;
+  price: null;
   network: string;
-  lat?: number; // Optional latitude
-  lng?: number; // Optional longitude
+  status: string;
+  usageCost: string | null;
+  access24Hours: boolean;
 }
 
+const LISBOA = { lat: 38.7223, lng: -9.1393 };
 
-interface ElectricVehicleHubProps {
-  vehicleId?: string;
-  userLocation?: { lat: number; lng: number };
+/** Estado do OpenChargeMap (em inglês) → texto e cor. */
+function stationStatus(s: ChargingStation): [string, string] {
+  const status = s.status.toLowerCase();
+  if (/not operational|out of service|removed|faulty/.test(status)) return ['Fora de serviço', 'bg-muted text-muted-foreground'];
+  if (s.available > 0) return [`Disponível (${s.available}/${s.total})`, 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'];
+  if (/operational/.test(status)) return ['Operacional', 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'];
+  return ['Estado desconhecido', 'bg-muted text-muted-foreground'];
 }
 
-const ElectricVehicleHub: React.FC<ElectricVehicleHubProps> = ({ 
-  vehicleId, 
-  userLocation: providedLocation
-}) => {
-  const [chargingStations, setChargingStations] = useState<ChargingStation[]>([]);
-  const [isLoadingStations, setIsLoadingStations] = useState(false);
-  const [searchRadius, setSearchRadius] = useState<number>(25); // km
-  const [radiusInput, setRadiusInput] = useState<string>('25'); // For controlled input
-  const [userCurrentLocation, setUserCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [locationError, setLocationError] = useState<string>('');
-  const [isGettingLocation, setIsGettingLocation] = useState<boolean>(false);
-  const [isReservationModalOpen, setIsReservationModalOpen] = useState(false);
+/** Postos de carregamento próximos e carregamentos planeados (veículos elétricos). */
+export default function ElectricVehicleHub({ vehicleId }: { vehicleId: string }) {
+  const { toast } = useToast();
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const [radiusInput, setRadiusInput] = useState('25');
   const [selectedStation, setSelectedStation] = useState<ChargingStation | null>(null);
 
-  // Debounce searchRadius updates
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      const newRadius = Number(radiusInput);
-      if (newRadius >= 5 && newRadius <= 100 && newRadius !== searchRadius) {
-        setSearchRadius(newRadius);
-      }
-    }, 500); // 500ms debounce
+  const radius = Math.min(100, Math.max(5, Number(useDebounced(radiusInput, 500)) || 25));
+  const center = location ?? LISBOA;
+  const { data: stations = [], isFetching, error } = useQuery<ChargingStation[]>({
+    queryKey: ['/api/charging-stations', center.lat, center.lng, radius],
+    queryFn: () => get<ChargingStation[]>(`/api/charging-stations?lat=${center.lat}&lng=${center.lng}&radius=${radius}`),
+    staleTime: 5 * 60 * 1000,
+  });
 
-    return () => clearTimeout(timeout);
-  }, [radiusInput, searchRadius]);
-  const { toast } = useToast();
-
-  // Get user's current location with multiple precision attempts
   const getCurrentLocation = () => {
     if (!navigator.geolocation) {
-      setLocationError('Geolocalização não é suportada neste navegador');
-      toast({
-        title: "Geolocalização indisponível",
-        description: "O seu navegador não suporta geolocalização",
-        variant: "destructive"
-      });
+      setLocationError('Este navegador não suporta geolocalização.');
       return;
     }
-
-    setIsGettingLocation(true);
+    setLocating(true);
     setLocationError('');
-    
-    // Strategy 1: Try watchPosition for real-time updates (most accurate)
-    let watchId: number;
-    let timeoutId: NodeJS.Timeout;
-    let gotLocation = false;
-
-    watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        if (gotLocation) return; // Already got a location
-        
-        const { latitude, longitude, accuracy } = position.coords;
-        const timestamp = position.timestamp;
-        const age = Date.now() - timestamp;
-        
-        // Accept location if accuracy is good enough or after some time
-        if (accuracy <= 100 || age < 10000) { // Accept if within 100m or fresh reading
-          gotLocation = true;
-          navigator.geolocation.clearWatch(watchId);
-          clearTimeout(timeoutId);
-          
-          setUserCurrentLocation({ lat: latitude, lng: longitude });
-          setIsGettingLocation(false);
-          
-          toast({
-            title: "Localização GPS obtida",
-            description: `Localização precisa (±${Math.round(accuracy)}m). A recarregar postos próximos...`,
-          });
-          
-          // Auto-reload stations when location changes
-          setTimeout(() => {
-            loadNearbyChargingStations();
-          }, 500);
-        }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setLocation({ lat: coords.latitude, lng: coords.longitude });
+        setLocating(false);
+        toast({ title: 'Localização obtida', description: `Precisão de ±${Math.round(coords.accuracy)} m.` });
       },
-      (error) => {
-        navigator.geolocation.clearWatch(watchId);
-        clearTimeout(timeoutId);
-        
-        if (!gotLocation) {
-          
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              if (gotLocation) return;
-              gotLocation = true;
-              
-              const { latitude, longitude, accuracy } = position.coords;
-
-              setUserCurrentLocation({ lat: latitude, lng: longitude });
-              setIsGettingLocation(false);
-              
-              toast({
-                title: "Localização obtida",
-                description: `Localização (±${Math.round(accuracy)}m). A recarregar postos próximos...`,
-              });
-              
-              setTimeout(() => {
-                loadNearbyChargingStations();
-              }, 500);
-            },
-            (fallbackError) => {
-              
-              // Strategy 3: Final fallback with lower accuracy
-              navigator.geolocation.getCurrentPosition(
-                (position) => {
-                  if (gotLocation) return;
-                  gotLocation = true;
-                  
-                  const { latitude, longitude, accuracy } = position.coords;
-                  
-                  setUserCurrentLocation({ lat: latitude, lng: longitude });
-                  setIsGettingLocation(false);
-                  
-                  toast({
-                    title: "Localização aproximada",
-                    description: `Localização obtida (±${Math.round(accuracy)}m). A recarregar postos próximos...`,
-                  });
-                  
-                  setTimeout(() => {
-                    loadNearbyChargingStations();
-                  }, 500);
-                },
-                (finalError) => {
-                  setIsGettingLocation(false);
-                  
-                  let errorMessage = '';
-                  switch (finalError.code) {
-                    case finalError.PERMISSION_DENIED:
-                      errorMessage = 'Permissão de localização negada. Por favor, permita o acesso à localização e recarregue a página.';
-                      break;
-                    case finalError.POSITION_UNAVAILABLE:
-                      errorMessage = 'Localização indisponível. Verifique se o GPS/Wi-Fi estão ativos.';
-                      break;
-                    case finalError.TIMEOUT:
-                      errorMessage = 'Timeout na obtenção da localização. Tente novamente.';
-                      break;
-                    default:
-                      errorMessage = 'Erro na geolocalização. A usar localização padrão.';
-                      break;
-                  }
-                  setLocationError(errorMessage);
-                  toast({
-                    title: "Erro de localização",
-                    description: errorMessage,
-                    variant: "destructive"
-                  });
-                },
-                {
-                  enableHighAccuracy: false,
-                  timeout: 10000,
-                  maximumAge: 600000 // 10 minutes for final fallback
-                }
-              );
-            },
-            {
-              enableHighAccuracy: true,
-              timeout: 10000,
-              maximumAge: 120000 // 2 minutes
-            }
-          );
-        }
+      (err) => {
+        setLocating(false);
+        setLocationError(
+          err.code === err.PERMISSION_DENIED
+            ? 'Permissão de localização negada. Permita o acesso à localização no navegador.'
+            : 'Não foi possível obter a localização. A mostrar postos perto de Lisboa.',
+        );
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 20000, // 20 seconds for GPS
-        maximumAge: 30000 // 30 seconds fresh data
-      }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
     );
-    
-    // Timeout for watch position
-    timeoutId = setTimeout(() => {
-      if (!gotLocation) {
-        navigator.geolocation.clearWatch(watchId);
-        // The error callback above will handle the fallback
-      }
-    }, 25000); // 25 second timeout for watch
-  };
-
-  // Try to get user location on component mount
-  useEffect(() => {
-    if (!providedLocation && !userCurrentLocation) {
-      getCurrentLocation();
-    }
-  }, [providedLocation, userCurrentLocation]);
-
-  // Memoize userLocation to prevent unnecessary re-renders
-  const userLocation = useMemo(() => {
-    if (providedLocation) return providedLocation;
-    if (userCurrentLocation) return userCurrentLocation;
-    
-    // Show warning for default location
-    if (!locationError) {
-    }
-    
-    // Use Lisboa as fallback (better charging station coverage)
-    return { lat: 38.7223, lng: -9.1393 }; // Lisboa - good charging station coverage
-  }, [providedLocation, userCurrentLocation, locationError]);
-
-  const loadNearbyChargingStations = async () => {
-    if (isLoadingStations) return; // Prevent multiple simultaneous calls
-    
-    setIsLoadingStations(true);
-    try {
-      const response = await get(
-        `/api/charging-stations?lat=${userLocation.lat}&lng=${userLocation.lng}&radius=${searchRadius}`
-      );
-      
-      // Ensure we always have an array
-      const stations = Array.isArray(response) ? response : [];
-      
-      setChargingStations(stations);
-      
-      if (stations.length === 0) {
-        toast({
-          title: "Nenhum posto encontrado",
-          description: `Não há postos de carregamento dentro de ${searchRadius}km. Tente aumentar o raio de pesquisa.`,
-          variant: "destructive"
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Erro ao carregar postos",
-        description: "Não foi possível carregar os postos de carregamento próximos.",
-        variant: "destructive"
-      });
-      setChargingStations([]);
-    } finally {
-      setIsLoadingStations(false);
-    }
-  };
-
-
-  useEffect(() => {
-    loadNearbyChargingStations();
-  }, [searchRadius, userLocation.lat, userLocation.lng]); // Reload when location or radius changes
-
-
-  const getAvailabilityColor = (availability: string) => {
-    switch (availability) {
-      case 'available': return 'bg-green-100 text-green-800';
-      case 'occupied': return 'bg-red-100 text-red-800';
-      case 'out_of_service': return 'bg-gray-100 text-gray-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getAvailabilityText = (availability: string) => {
-    switch (availability) {
-      case 'available': return 'Disponível';
-      case 'occupied': return 'Ocupado';
-      case 'out_of_service': return 'Fora de Serviço';
-      default: return 'Desconhecido';
-    }
-  };
-
-  const openDirections = (station: ChargingStation) => {
-    // Use most accurate location available - prioritize GPS
-    let currentLocation: { lat: number; lng: number };
-    let locationSource = '';
-    
-    if (userCurrentLocation) {
-      currentLocation = userCurrentLocation;
-      locationSource = 'GPS atual';
-    } else if (providedLocation) {
-      currentLocation = providedLocation;
-      locationSource = 'localização fornecida';
-    } else {
-      currentLocation = userLocation;
-      locationSource = 'localização padrão';
-    }
-    
-    const { lat, lng } = currentLocation;
-
-    let destination = '';
-    let originCoords = `${lat},${lng}`;
-    
-    if (station.lat && station.lng) {
-      destination = `${station.lat},${station.lng}`;
-    } else {
-      destination = encodeURIComponent(station.address);
-    }
-    
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const isAndroid = /Android/.test(navigator.userAgent);
-    
-    let directionsUrl = '';
-    
-    if (isIOS) {
-      if (station.lat && station.lng) {
-        directionsUrl = `maps://maps.apple.com/?saddr=${originCoords}&daddr=${station.lat},${station.lng}&dirflg=d`;
-      } else {
-        directionsUrl = `maps://maps.apple.com/?saddr=${originCoords}&daddr=${encodeURIComponent(station.address)}&dirflg=d`;
-      }
-    } else if (isAndroid) {
-      // Use Google Maps on Android with precise coordinates
-      directionsUrl = `google.navigation:q=${destination}&origin=${originCoords}`;
-    } else {
-      // Use Google Maps web for desktop/other devices with precise origin
-      directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originCoords}&destination=${destination}&travelmode=driving`;
-    }
-    
-    try {
-      // Try to open native app first
-      const link = document.createElement('a');
-      link.href = directionsUrl;
-      link.target = '_blank'; // Ensure it opens properly
-      link.click();
-      
-      toast({
-        title: "Direções abertas",
-        description: `Direções da sua ${locationSource} para ${station.name}.`,
-      });
-    } catch (error) {
-      
-      // Fallback to Google Maps web if native apps fail
-      const fallbackUrl = `https://www.google.com/maps/dir/?api=1&origin=${originCoords}&destination=${destination}&travelmode=driving`;
-      window.open(fallbackUrl, '_blank');
-      
-      toast({
-        title: "Direções abertas",
-        description: `As direções foram abertas no Google Maps usando a sua ${locationSource}.`,
-      });
-    }
-  };
-
-  const reserveStation = (station: ChargingStation) => {
-    if (!vehicleId) {
-      toast({
-        title: "Veículo não selecionado",
-        description: "Por favor, selecione um veículo para fazer a reserva.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    setSelectedStation(station);
-    setIsReservationModalOpen(true);
   };
 
   return (
     <div className="space-y-6">
-      
-      {/* Header */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-green-600" />
-            Centro de Veículos Elétricos
+            <BatteryCharging className="h-5 w-5 text-green-600 dark:text-green-400" aria-hidden="true" />
+            Carregamentos Planeados
           </CardTitle>
         </CardHeader>
+        <CardContent>
+          <ChargingReservationsList vehicleId={vehicleId} />
+        </CardContent>
       </Card>
 
-      {/* EV Comparison Calculator */}
-      {vehicleId && <EVComparisonCalculator vehicleId={vehicleId} />}
-
-      {/* Nearby Charging Stations */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <MapPin className="h-5 w-5" />
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <CardTitle className="flex flex-wrap items-center gap-2">
+              <MapPin className="h-5 w-5" aria-hidden="true" />
               Postos de Carregamento Próximos
-              {userCurrentLocation && (
-                <Badge variant="outline" className="ml-2 text-green-600 border-green-600">
-                  GPS Ativo
-                </Badge>
-              )}
+              {location && <Badge variant="outline" className="text-green-700 dark:text-green-400 border-current">GPS ativo</Badge>}
             </CardTitle>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <Label>Raio:</Label>
-                <Input
-                  type="number"
-                  value={radiusInput}
-                  onChange={(e) => setRadiusInput(e.target.value)}
-                  className="w-20"
-                  min="5"
-                  max="100"
-                />
-                <span className="text-sm text-gray-500">km</span>
+                <Label htmlFor="ev-radius">Raio:</Label>
+                <Input id="ev-radius" type="number" value={radiusInput} onChange={(e) => setRadiusInput(e.target.value)} className="w-20" min="5" max="100" />
+                <span className="text-sm text-muted-foreground">km</span>
               </div>
-              <Button 
-                onClick={getCurrentLocation} 
-                variant="outline" 
-                size="sm"
-                disabled={isGettingLocation}
-                className="flex items-center gap-2"
-              >
-                {isGettingLocation ? (
-                  <>
-                    <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
-                    A obter localização...
-                  </>
-                ) : (
-                  <>
-                    <MapPin className="h-4 w-4" />
-                    {userCurrentLocation ? 'Atualizar GPS' : 'Obter Localização'}
-                  </>
-                )}
+              <Button onClick={getCurrentLocation} variant="outline" size="sm" disabled={locating}>
+                {locating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden="true" /> : <MapPin className="h-4 w-4 mr-2" aria-hidden="true" />}
+                {locating ? 'A obter localização...' : location ? 'Atualizar localização' : 'Usar a minha localização'}
               </Button>
             </div>
           </div>
-          {userCurrentLocation && (
-            <div className="mt-2 text-sm text-green-600 bg-green-50 p-2 rounded">
-              📍 Localização atual: {userCurrentLocation.lat.toFixed(4)}, {userCurrentLocation.lng.toFixed(4)}
-            </div>
-          )}
+          {!location && !locationError && <p className="text-sm text-muted-foreground mt-2">A mostrar postos perto de Lisboa.</p>}
           {locationError && (
             <Alert variant="destructive" className="mt-2">
               <AlertDescription>{locationError}</AlertDescription>
             </Alert>
           )}
-          {userCurrentLocation && (
-            <div className="text-sm text-green-600 mt-2">
-              ✓ Localização atual detetada: {userCurrentLocation.lat.toFixed(4)}, {userCurrentLocation.lng.toFixed(4)}
-            </div>
-          )}
         </CardHeader>
         <CardContent>
-          {isLoadingStations ? (
-            <div className="text-center py-8">
-              <div className="inline-flex items-center gap-2">
-                <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full"></div>
-                A carregar postos de carregamento...
-              </div>
-            </div>
-          ) : !Array.isArray(chargingStations) || chargingStations.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              Nenhum posto de carregamento encontrado num raio de {searchRadius}km.
-            </div>
+          {isFetching ? (
+            <p className="text-center py-8 text-muted-foreground" role="status">A carregar postos de carregamento...</p>
+          ) : error ? (
+            <p className="text-center py-8 text-destructive">{handleApiError(error, 'Não foi possível carregar os postos.')}</p>
+          ) : stations.length === 0 ? (
+            <p className="text-center py-8 text-muted-foreground">Nenhum posto de carregamento num raio de {radius} km.</p>
           ) : (
             <div className="space-y-4">
-              {Array.isArray(chargingStations) && chargingStations.map((station) => (
-              <div key={station.id} className="border rounded-lg p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h4 className="font-medium">{station.name}</h4>
-                    <p className="text-sm text-gray-600">{station.address}</p>
+              {stations.map((station) => {
+                const [statusText, statusClass] = stationStatus(station);
+                return (
+                  <div key={station.id} className="border border-border rounded-lg p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-2">
+                      <div className="min-w-0">
+                        <h4 className="font-medium break-words">{station.name}</h4>
+                        <p className="text-sm text-muted-foreground break-words">{station.address}</p>
+                      </div>
+                      <Badge className={`${statusClass} shrink-0`}>{statusText}</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div><span className="text-muted-foreground">Distância:</span><div className="font-medium">{formatNumber(station.distance, 1)} km</div></div>
+                      <div><span className="text-muted-foreground">Potência:</span><div className="font-medium">{station.power ? `${formatNumber(station.power)} kW` : '—'}</div></div>
+                      <div><span className="text-muted-foreground">Preço:</span><div className="font-medium break-words">{station.usageCost || 'Não indicado'}</div></div>
+                      <div><span className="text-muted-foreground">Rede:</span><div className="font-medium break-words">{station.network}</div></div>
+                    </div>
+                    {station.connectorTypes.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <span className="text-sm text-muted-foreground">Conectores:</span>
+                        {station.connectorTypes.map((type) => <Badge key={type} variant="outline" className="text-xs">{type}</Badge>)}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={`https://www.google.com/maps/dir/?api=1&destination=${station.lat},${station.lng}&travelmode=driving`} target="_blank" rel="noopener noreferrer">
+                          <Route className="h-3 w-3 mr-1" aria-hidden="true" /> Direções
+                        </a>
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setSelectedStation(station)}>
+                        <Battery className="h-3 w-3 mr-1" aria-hidden="true" /> Planear carregamento
+                      </Button>
+                    </div>
                   </div>
-                  <Badge className={getAvailabilityColor(station.availability)}>
-                    {getAvailabilityText(station.availability)}
-                  </Badge>
-                </div>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-500">Distância:</span>
-                    <div className="font-medium">{station.distance} km</div>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Potência:</span>
-                    <div className="font-medium">{station.power} kW</div>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Preço:</span>
-                    <div className="font-medium">€{station.price}/kWh</div>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Rede:</span>
-                    <div className="font-medium">{station.network}</div>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="text-sm text-gray-500">Conectores:</span>
-                  {station.connectorTypes.map((type) => (
-                    <Badge key={type} variant="outline" className="text-xs">
-                      {type}
-                    </Badge>
-                  ))}
-                </div>
-                
-                <div className="flex gap-2 mt-3">
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    onClick={() => openDirections(station)}
-                  >
-                    <Route className="h-3 w-3 mr-1" />
-                    Direções
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    onClick={() => reserveStation(station)}
-                  >
-                    <Battery className="h-3 w-3 mr-1" />
-                    Reservar
-                  </Button>
-                </div>
-              </div>
-            ))}
+                );
+              })}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* EV Tips and Information */}
       <Card>
         <CardHeader>
-          <CardTitle>Dicas para Veículos Elétricos</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-green-600 dark:text-green-400" aria-hidden="true" />
+            Dicas para Veículos Elétricos
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <h4 className="font-medium mb-2">Carregamento Inteligente</h4>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>• Carregue durante a noite (tarifas mais baixas)</li>
-                <li>• Use carregamento lento (80%) para preservar bateria</li>
-                <li>• Planeie rotas com postos de carregamento</li>
+              <ul className="text-sm text-muted-foreground space-y-1 list-disc pl-4">
+                <li>Carregue durante a noite (tarifas mais baixas)</li>
+                <li>Carregue até 80% no dia a dia para preservar a bateria</li>
+                <li>Planeie rotas com postos de carregamento</li>
               </ul>
             </div>
             <div>
               <h4 className="font-medium mb-2">Maximizar Autonomia</h4>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>• Pré-condicione o habitáculo enquanto carrega</li>
-                <li>• Use modo ECO em cidade</li>
-                <li>• Mantenha pressão correta dos pneus</li>
+              <ul className="text-sm text-muted-foreground space-y-1 list-disc pl-4">
+                <li>Pré-condicione o habitáculo enquanto carrega</li>
+                <li>Use o modo ECO em cidade</li>
+                <li>Mantenha a pressão correta dos pneus</li>
               </ul>
             </div>
-        </div>
-          </CardContent>
-        </Card>
-      
-      <ChargingStationReservationModal
-        isOpen={isReservationModalOpen}
-        onClose={() => {
-          setIsReservationModalOpen(false);
-          setSelectedStation(null);
-        }}
-        vehicleId={vehicleId || ''}
-        station={selectedStation}
-      />
+          </div>
+        </CardContent>
+      </Card>
+
+      <ChargingStationReservationModal isOpen={!!selectedStation} onClose={() => setSelectedStation(null)} vehicleId={vehicleId} station={selectedStation} />
     </div>
   );
-};
-
-export default ElectricVehicleHub;
+}

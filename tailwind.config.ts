@@ -190,48 +190,5 @@ export default {
       },
     },
   },
-  plugins: [
-    require("tailwindcss-animate"), 
-    require("@tailwindcss/typography"),
-    // Custom plugin for futuristic effects
-    function({ addUtilities, theme }: any) {
-      const newUtilities = {
-        '.hover-scale': {
-          transition: 'transform 0.3s ease, box-shadow 0.3s ease',
-          '&:hover': {
-            transform: 'translateY(-2px)',
-            boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
-          },
-        },
-        '.glass-card': {
-          backdropFilter: 'blur(10px)',
-          backgroundColor: 'rgba(255, 255, 255, 0.1)',
-          border: '1px solid rgba(255, 255, 255, 0.2)',
-        },
-        '.gradient-bg': {
-          background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%)',
-        },
-        '.text-gradient': {
-          backgroundImage: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%)',
-          backgroundClip: 'text',
-          WebkitBackgroundClip: 'text',
-          color: 'transparent',
-        },
-        '.border-gradient': {
-          border: '1px solid transparent',
-          backgroundImage: 'linear-gradient(hsl(var(--background)), hsl(var(--background))), linear-gradient(135deg, hsl(var(--primary)), hsl(var(--secondary)))',
-          backgroundOrigin: 'border-box',
-          backgroundClip: 'content-box, border-box',
-        },
-        '.safe-area-inset': {
-          paddingTop: 'env(safe-area-inset-top)',
-          paddingRight: 'env(safe-area-inset-right)',
-          paddingBottom: 'env(safe-area-inset-bottom)',
-          paddingLeft: 'env(safe-area-inset-left)',
-        },
-      };
-      
-      addUtilities(newUtilities);
-    },
-  ],
+  plugins: [require("tailwindcss-animate")],
 } satisfies Config;

@@ -1,19 +1,26 @@
 import type { Express } from 'express';
 import bcrypt from 'bcryptjs';
-import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { storage } from '../storage';
 import { signJwt } from '../jwtUtils';
-import { requireAuth, uploads, userId, HttpError } from '../http';
+import { requireAuth, uploads, userId, HttpError, limiter, removeUpload, isOwnVehiclePhoto } from '../http';
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+// Login: só contam as tentativas falhadas (quem entra bem não fica bloqueado)
+const loginLimiter = limiter(10, 'tentativas de login', 15 * 60 * 1000, { skipSuccessfulRequests: true });
+const registerLimiter = limiter(10, 'tentativas de registo', 60 * 60 * 1000);
+const passwordLimiter = limiter(10, 'tentativas', 15 * 60 * 1000, { skipSuccessfulRequests: true });
+
+// Hash de referência: quando o email não existe compara-se na mesma, para o tempo de resposta não revelar quem está registado
+const DUMMY_HASH = bcrypt.hashSync('logicar-dummy-password', 10);
+
+const password = z.string().min(6, 'A palavra-passe deve ter pelo menos 6 caracteres').max(200);
 
 const email = z.string().trim().toLowerCase().pipe(z.email('Email inválido'));
 
 const registerSchema = z.object({
   name: z.string().trim().min(1, 'Nome obrigatório').max(200),
   email,
-  password: z.string().min(6, 'A palavra-passe deve ter pelo menos 6 caracteres').max(200),
+  password,
 });
 
 const profileSchema = z.object({
@@ -26,11 +33,7 @@ const profileSchema = z.object({
 });
 
 const DEFAULT_PREFERENCES = {
-  experienceLevel: 'beginner',
   theme: 'auto',
-  layout: 'comfortable',
-  showAdvancedFeatures: false,
-  enableVoiceControl: false,
   language: 'pt',
   notificationPreferences: { maintenance: true, fuel: true, expenses: false, recommendations: true },
 };
@@ -38,7 +41,7 @@ const DEFAULT_PREFERENCES = {
 const isBcryptHash = (value: string) => /^\$2[aby]\$/.test(value);
 
 export function registerAuthRoutes(app: Express) {
-  app.post('/login', authLimiter, async (req, res) => {
+  app.post('/login', loginLimiter, async (req, res) => {
     const { email: rawEmail, password } = req.body ?? {};
     if (typeof rawEmail !== 'string' || typeof password !== 'string' || !rawEmail || !password) {
       return res.status(400).json({ message: 'Email e palavra-passe obrigatórios.' });
@@ -46,7 +49,9 @@ export function registerAuthRoutes(app: Express) {
 
     const user = await storage.getUserByEmail(rawEmail.trim().toLowerCase());
     let valid = false;
-    if (user?.password) {
+    if (!user?.password) {
+      await bcrypt.compare(password, DUMMY_HASH);
+    } else {
       if (isBcryptHash(user.password)) {
         valid = await bcrypt.compare(password, user.password);
       } else if (password === user.password) {
@@ -63,7 +68,7 @@ export function registerAuthRoutes(app: Express) {
     res.json({ token: signJwt(user), user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
   });
 
-  app.post('/api/register', authLimiter, async (req, res) => {
+  app.post('/api/register', registerLimiter, async (req, res) => {
     const { name, email, password } = registerSchema.parse(req.body);
     if (await storage.getUserByEmail(email)) {
       return res.status(409).json({ message: 'Este email já está registado.' });
@@ -107,8 +112,34 @@ export function registerAuthRoutes(app: Express) {
   app.post('/api/user/profile-image', requireAuth, uploads.profile.single('profileImage'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'Nenhum ficheiro enviado' });
     const profileImageUrl = `/uploads/${req.file.filename}`;
+    const previous = (await storage.getUser(userId(req)))?.profileImageUrl;
     await storage.updateUserProfileImage(userId(req), profileImageUrl);
+    if (previous) removeUpload(previous);
     res.json({ message: 'Foto de perfil atualizada', profileImageUrl });
+  });
+
+  app.put('/api/user/password', requireAuth, passwordLimiter, async (req, res) => {
+    const { currentPassword, newPassword } = z.object({ currentPassword: z.string().min(1), newPassword: password }).parse(req.body);
+    const user = await storage.getUserWithPassword(userId(req));
+    if (!user?.password || !(await bcrypt.compare(currentPassword, user.password))) {
+      throw new HttpError(401, 'A palavra-passe atual está errada.');
+    }
+    await storage.updateUserPassword(user.id, await bcrypt.hash(newPassword, 10));
+    res.status(204).send();
+  });
+
+  // Elimina a conta e todos os dados (veículos, registos, ficheiros). Pede a palavra-passe para confirmar.
+  app.delete('/api/user', requireAuth, passwordLimiter, async (req, res) => {
+    const { password: confirm } = z.object({ password: z.string().min(1, 'Indique a palavra-passe') }).parse(req.body ?? {});
+    const user = await storage.getUserWithPassword(userId(req));
+    if (!user?.password || !(await bcrypt.compare(confirm, user.password))) {
+      throw new HttpError(401, 'A palavra-passe está errada.');
+    }
+    for (const file of await storage.deleteUser(user.id)) {
+      // fotos de veículos podem estar a ser usadas noutro veículo: só se apagam se ninguém as usar
+      if (!isOwnVehiclePhoto(file) || (await storage.photoUsage(file)) === 0) removeUpload(file);
+    }
+    res.status(204).send();
   });
 
   app.get('/api/user/preferences', requireAuth, async (req, res) => {

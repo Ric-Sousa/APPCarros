@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import type { Server } from 'http';
 
-process.env.JWT_SECRET = 'test-secret';
+process.env.JWT_SECRET = 'test-secret-com-pelo-menos-32-caracteres';
+process.env.TZ = 'UTC';
 process.env.DB_CLIENT ??= 'sqlite';
 if (process.env.DB_CLIENT === 'sqlite') process.env.DB_FILE ??= ':memory:';
 
@@ -108,7 +109,7 @@ test('combustível: criar, editar, apagar e consumo', async () => {
     assert.equal(r.body.fullTank, false);
     ids.fuel = r.body.id;
   }
-  assert.equal((await call('POST', '/api/fuel-records', 'bob', { vehicleId: ids.vehicle, date: '2026-01-01', mileage: 1, liters: 1, costPerLiter: 1, totalCost: 1, fuelType: 'x' })).status, 404);
+  assert.equal((await call('POST', '/api/fuel-records', 'bob', { vehicleId: ids.vehicle, date: '2026-01-01', mileage: 1, liters: 1, costPerLiter: 1, totalCost: 1, fuelType: 'diesel' })).status, 404);
 
   const put = await call('PUT', `/api/fuel-records/${ids.fuel}`, 'alice', { notes: 'cheio', fullTank: true });
   assert.equal(put.status, 200);
@@ -159,13 +160,23 @@ test('despesas, marcações e reservas', async () => {
   assert.equal(res.status, 201, JSON.stringify(res.body));
 });
 
-test('alertas: só o dono os altera', async () => {
-  const id = `alert-${suffix}`;
-  await db.insertInto('alerts').values(toRow(schema.alerts, withDefaults(schema.alerts, { id, vehicleId: ids.vehicle, type: 'oil', title: 'Óleo', priority: 'urgent' }))).execute();
+test('alertas gerados a partir dos dados do veículo; só o dono os altera', async () => {
+  // IUC a vencer ontem -> alerta urgente
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  assert.equal((await call('PATCH', `/api/vehicles/${ids.vehicle}`, 'alice', { iucDue: yesterday })).status, 200);
   const stats = await call('GET', '/api/stats', 'alice');
   assert.equal(stats.body.urgentAlerts, 1);
-  assert.equal((await call('PATCH', `/api/alerts/${id}/dismiss`, 'bob')).status, 404);
-  assert.equal((await call('PATCH', `/api/alerts/${id}/dismiss`, 'alice')).status, 204);
+  const alerts = (await call('GET', '/api/alerts', 'alice')).body;
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].type, 'iuc');
+  assert.equal((await call('GET', '/api/alerts', 'bob')).body.length, 0);
+  assert.equal((await call('PATCH', `/api/alerts/${alerts[0].id}/dismiss`, 'bob')).status, 404);
+  assert.equal((await call('PATCH', `/api/alerts/${alerts[0].id}/dismiss`, 'alice')).status, 204);
+  // descartado continua descartado depois de nova sincronização
+  assert.equal((await call('GET', '/api/alerts', 'alice')).body.length, 0);
+  assert.equal((await call('GET', '/api/stats', 'alice')).body.urgentAlerts, 0);
+  // novo prazo (IUC pago e renovado) -> sem alerta
+  assert.equal((await call('PATCH', `/api/vehicles/${ids.vehicle}`, 'alice', { iucDue: '2030-01-01' })).status, 200);
   assert.equal((await call('GET', '/api/alerts', 'alice')).body.length, 0);
 });
 
@@ -208,10 +219,79 @@ test('documentos: upload, acesso só do dono e remoção', async () => {
 });
 
 test('apagar o veículo apaga os dados associados', async () => {
+  if (ids.vehicle2) assert.equal((await call('DELETE', `/api/vehicles/${ids.vehicle2}`, 'alice')).status, 204);
   assert.equal((await call('DELETE', `/api/vehicles/${ids.vehicle}`, 'alice')).status, 204);
   assert.equal((await call('GET', '/api/fuel-records', 'alice')).body.length, 0);
   const leftovers = await db.selectFrom('fuel_records').select('id').where('vehicle_id', '=', ids.vehicle).execute();
   assert.equal(leftovers.length, 0);
+});
+
+test('segurança: receiptUrl e imageUrl não podem apontar para ficheiros de outros', async () => {
+  const other = await call('POST', '/api/vehicles', 'alice', { licensePlate: `S-${suffix}`.slice(0, 10), brand: 'Seat', model: 'Ibiza', year: 2015, currentMileage: 1 });
+  assert.equal(other.status, 201);
+  ids.vehicle2 = other.body.id;
+  // receiptUrl enviado pelo cliente é ignorado
+  const exp = await call('POST', '/api/expenses', 'alice', { vehicleId: ids.vehicle2, type: 'x', category: 'y', amount: 1, date: '2026-01-01', receiptUrl: '/uploads/de-outro.pdf' });
+  assert.equal(exp.status, 201);
+  assert.equal(exp.body.receiptUrl, null);
+  // imageUrl com caminho manipulado é rejeitado
+  for (const imageUrl of ['/uploads/vehicle-x/../de-outro.pdf', 'javascript:alert(1)', 'http://inseguro/foto.jpg', '/uploads/documento.pdf']) {
+    assert.equal((await call('PATCH', `/api/vehicles/${ids.vehicle2}`, 'alice', { imageUrl })).status, 400, imageUrl);
+  }
+  assert.equal((await call('PATCH', `/api/vehicles/${ids.vehicle2}`, 'alice', { imageUrl: 'https://upload.wikimedia.org/x.jpg' })).status, 200);
+});
+
+test('validação de números e datas', async () => {
+  const bad = [
+    { liters: 'abc' }, { costPerLiter: -5 }, { date: 'banana' }, { mileage: 1.5 },
+  ];
+  for (const patch of bad) {
+    const r = await call('POST', '/api/fuel-records', 'alice', { vehicleId: ids.vehicle2, date: '2026-01-01', mileage: 10, liters: '20', costPerLiter: '1.6', totalCost: '32', fuelType: 'diesel', ...patch });
+    assert.equal(r.status, 400, JSON.stringify(patch));
+  }
+  // formatos portugueses e combustível antigo aceites
+  const ok = await call('POST', '/api/fuel-records', 'alice', { vehicleId: ids.vehicle2, date: '15/01/2026', mileage: 10, liters: '20,5', costPerLiter: '1.6', totalCost: '32.8', fuelType: 'Gasóleo' });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(ok.body.fuelType, 'diesel');
+  assert.equal(new Date(ok.body.date).toISOString().slice(0, 10), '2026-01-15');
+  assert.equal((await call('PATCH', `/api/vehicles/${ids.vehicle2}`, 'alice', { lastOilChange: 'banana' })).status, 400);
+});
+
+test('marcações, reservas e manutenções de todos os veículos', async () => {
+  await call('POST', `/api/vehicles/${ids.vehicle2}/appointments`, 'alice', { type: 'inspection', title: 'Inspeção', scheduledDate: '2026-05-01', scheduledTime: '09:30' });
+  await call('POST', `/api/vehicles/${ids.vehicle2}/maintenance`, 'alice', { type: 'oil_change', description: 'Óleo', performedAt: '2026-02-01', cost: '45.5' });
+  assert.ok((await call('GET', '/api/appointments', 'alice')).body.length >= 1);
+  assert.ok(Array.isArray((await call('GET', '/api/reservations', 'alice')).body));
+  const recent = (await call('GET', '/api/maintenance?limit=5', 'alice')).body;
+  assert.equal(recent[0].description, 'Óleo');
+  assert.equal((await call('GET', '/api/appointments', 'bob')).body.length, 0);
+});
+
+test('comparação só com 5 ou mais veículos iguais', async () => {
+  const c = (await call('GET', `/api/vehicles/${ids.vehicle2}/compare`, 'alice')).body;
+  assert.equal(c.averageExpenses, undefined);
+  assert.equal(c.averageConsumption, undefined);
+});
+
+test('ficheiros: 404 para inexistentes e health check', async () => {
+  assert.equal((await call('GET', '/uploads/profile-nao-existe.png')).status, 404);
+  const health = await call('GET', '/api/health');
+  assert.equal(health.status, 200);
+  assert.equal(health.body.status, 'ok');
+});
+
+test('palavra-passe e eliminação de conta', async () => {
+  const r = await call('POST', '/api/register', undefined, { name: 'Carla', email: email('carla'), password: 'segredo123' });
+  tokens.carla = r.body.token;
+  assert.equal((await call('PUT', '/api/user/password', 'carla', { currentPassword: 'errada', newPassword: 'nova-pass-1' })).status, 401);
+  assert.equal((await call('PUT', '/api/user/password', 'carla', { currentPassword: 'segredo123', newPassword: 'nova-pass-1' })).status, 204);
+  assert.equal((await call('POST', '/login', undefined, { email: email('carla'), password: 'nova-pass-1' })).status, 200);
+  const car = await call('POST', '/api/vehicles', 'carla', { licensePlate: 'CA-01-RL', brand: 'Fiat', model: '500', year: 2018, currentMileage: 5 });
+  assert.equal((await call('DELETE', '/api/user', 'carla', { password: 'errada' })).status, 401);
+  assert.equal((await call('DELETE', '/api/user', 'carla', { password: 'nova-pass-1' })).status, 204);
+  assert.equal((await call('POST', '/login', undefined, { email: email('carla'), password: 'nova-pass-1' })).status, 401);
+  const left = await db.selectFrom('vehicles').select('id').where('id', '=', car.body.id).execute();
+  assert.equal(left.length, 0);
 });
 
 test('validação devolve detalhes', async () => {
@@ -219,4 +299,18 @@ test('validação devolve detalhes', async () => {
   assert.equal(r.status, 400);
   assert.ok(r.body.errors.length >= 2);
   assert.equal((await call('GET', '/api/vehicle-data/12-AB-34')).status, 401);
+});
+
+test('consulta de matrícula: campos do PHP traduzidos para o formulário', async () => {
+  const { mapVehicleData } = await import('./services/vehicleApi');
+  const mapped = mapVehicleData('AA-00-AA', {
+    brand: 'SUZUKI', model: 'GSX-R 600', year: '2007', fuelType: 'Gasolina', cylinderCapacity: '599 cm3',
+    powerCV: '125 cv', entity: 'IMT', category: 'Motociclo', inspectionValidity: '31/12/2026',
+    insuranceEnd: 'Não encontrado', iucCategory: 'E',
+  });
+  assert.deepEqual(mapped, {
+    licensePlate: 'AA-00-AA', brand: 'SUZUKI', model: 'GSX-R 600', year: 2007, fuelType: 'gasoline95',
+    powerCV: 125, engineDisplacement: 599, iucCategory: 'E', certifyingEntity: 'IMT', vehicleCategory: 'Motociclo',
+    inspectionDue: '2026-12-31',
+  });
 });

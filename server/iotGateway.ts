@@ -1,3 +1,4 @@
+// Ponte IoT: mensagens MQTT dos dispositivos -> Socket.IO para os browsers dos donos dos veículos.
 import { Server as HttpServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import mqtt, { MqttClient } from 'mqtt';
@@ -6,118 +7,85 @@ import { storage } from './storage';
 
 export interface IoTGatewayOptions {
   httpServer: HttpServer;
-  allowedOrigins: string[];
-  mqttUrl?: string;
-  mqttUser?: string;
-  mqttPass?: string;
+  /** Mesma regra de origens do Express (CORS_ORIGINS + a própria app). */
+  isAllowedOrigin: (origin: string | undefined, host: string | undefined) => boolean;
 }
 
-export function initIoTGateway(opts: IoTGatewayOptions) {
-  const { httpServer, allowedOrigins, mqttUrl = process.env.MQTT_URL, mqttUser = process.env.MQTT_USER, mqttPass = process.env.MQTT_PASS } = opts;
-
-  // Socket.IO server
+export function initIoTGateway({ httpServer, isAllowedOrigin }: IoTGatewayOptions) {
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
-    cors: {
-      origin: allowedOrigins,
-      methods: ['GET', 'POST']
-    }
+    cors: { origin: true, methods: ['GET', 'POST'] },
+    allowRequest: (req, callback) => callback(null, isAllowedOrigin(req.headers.origin, req.headers.host)),
   });
 
-  // Authenticate sockets using JWT passed in handshake auth
+  // Autenticação com o JWT enviado no handshake (auth.token ou header Authorization)
   io.use((socket, next) => {
-    try {
-      const tokenRaw = socket.handshake.auth?.token || socket.handshake.headers['authorization'];
-      if (!tokenRaw) return next(new Error('unauthorized'));
-
-      // token may be in form 'Bearer <token>'
-      const token = String(tokenRaw).startsWith('Bearer ') ? String(tokenRaw).split(' ')[1] : String(tokenRaw);
-      const payload = verifyJwt(token as string);
-      if (!payload) return next(new Error('unauthorized'));
-
-      // attach user payload to socket.data for later use
-      socket.data.user = payload;
-      return next();
-    } catch (err) {
-      return next(new Error('unauthorized'));
-    }
+    const raw = String(socket.handshake.auth?.token || socket.handshake.headers.authorization || '');
+    const payload = verifyJwt(raw.startsWith('Bearer ') ? raw.slice(7) : raw);
+    if (!payload) return next(new Error('unauthorized'));
+    socket.data.user = payload;
+    next();
   });
 
   io.on('connection', (socket) => {
-    console.log('🔌 Socket.IO client connected:', socket.id, 'user=', socket.data.user?.sub || 'unknown');
+    // A ligação termina quando o token expira (o cliente volta a ligar com um token novo)
+    const exp = (socket.data.user as { exp?: number }).exp;
+    if (exp) {
+      const timer = setTimeout(() => socket.disconnect(true), Math.max(0, exp * 1000 - Date.now()));
+      socket.on('disconnect', () => clearTimeout(timer));
+    }
 
     // Só entra na sala do veículo se o veículo pertencer ao utilizador autenticado
-    socket.on('subscribe_vehicle', async (vehicleId: string) => {
-      const vehicle = typeof vehicleId === 'string' && await storage.getUserVehicle(socket.data.user.sub, vehicleId).catch(() => undefined);
+    socket.on('subscribe_vehicle', async (vehicleId: unknown) => {
+      const vehicle = typeof vehicleId === 'string'
+        ? await storage.getUserVehicle(socket.data.user.sub, vehicleId).catch(() => undefined)
+        : undefined;
       if (!vehicle) {
         socket.emit('iot:error', { vehicleId, message: 'Veículo não encontrado' });
         return;
       }
-      socket.join(`vehicle_${vehicleId}`);
+      socket.join(`vehicle_${vehicle.id}`);
     });
 
-    socket.on('unsubscribe_vehicle', (vehicleId: string) => {
-      socket.leave(`vehicle_${vehicleId}`);
-    });
-
-    socket.on('disconnect', () => {
-      // nothing special for now
+    socket.on('unsubscribe_vehicle', (vehicleId: unknown) => {
+      if (typeof vehicleId === 'string') socket.leave(`vehicle_${vehicleId}`);
     });
   });
 
-  // MQTT client
-  // If no mqttUrl provided, skip connecting to avoid unauthorized/connect errors
+  const mqttUrl = process.env.MQTT_URL;
   if (!mqttUrl) {
-    console.log('🔕 MQTT disabled: no MQTT_URL configured. To enable, set MQTT_URL in environment variables.');
-    return { io, mqttClient: null } as any;
+    console.log('🔕 MQTT desligado (defina MQTT_URL para o ativar).');
+    return { io, mqttClient: null as MqttClient | null };
   }
 
-  const mqttOptions: mqtt.IClientOptions = {};
-  if (mqttUser) mqttOptions.username = mqttUser;
-  if (mqttPass) mqttOptions.password = mqttPass;
-
-  const client: MqttClient = mqtt.connect(mqttUrl, mqttOptions);
+  const client = mqtt.connect(mqttUrl, {
+    username: process.env.MQTT_USER || undefined,
+    password: process.env.MQTT_PASS || undefined,
+  });
 
   client.on('connect', () => {
-    console.log('🔗 Conectado ao broker MQTT em', mqttUrl);
-    // subscribe to vehicle sensor topics
-    client.subscribe('vehicle/+/sensor/+', { qos: 0 }, (err) => {
-      if (err) console.error('Erro ao subscrever tópicos MQTT:', err);
-    });
-
-    // subscribe to device presence topics
-    client.subscribe('vehicle/+/device/+', { qos: 0 }, (err) => {
-      if (err) console.error('Erro ao subscrever tópicos MQTT (devices):', err);
+    console.log('🔗 Ligado ao broker MQTT', mqttUrl);
+    // vehicle/{vehicleId}/sensor/{nome} e vehicle/{vehicleId}/device/{nome}
+    client.subscribe(['vehicle/+/sensor/+', 'vehicle/+/device/+'], { qos: 0 }, (err) => {
+      if (err) console.error('Erro ao subscrever os tópicos MQTT:', err.message);
     });
   });
 
   client.on('message', (topic, payload) => {
+    const [root, vehicleId, kind, ...rest] = topic.split('/');
+    if (root !== 'vehicle' || !vehicleId || rest.length === 0) return;
+    let data: unknown;
     try {
-      const str = payload.toString();
-      const data = JSON.parse(str);
-
-      // topic like vehicle/{vehicleId}/sensor/{sensor}
-      const parts = topic.split('/');
-      if (parts.length >= 4 && parts[0] === 'vehicle') {
-        const vehicleId = parts[1];
-        const kind = parts[2];
-        const name = parts.slice(3).join('/');
-
-        if (kind === 'sensor') {
-          // emit to clients in room vehicle_{vehicleId}
-          io.to(`vehicle_${vehicleId}`).emit('iot:sensor', { vehicleId, sensor: name, data });
-        }
-
-        if (kind === 'device') {
-          io.to(`vehicle_${vehicleId}`).emit('iot:device', { vehicleId, device: name, data });
-        }
-      }
-    } catch (err) {
-      console.error('Erro ao processar mensagem MQTT:', err);
+      data = JSON.parse(payload.toString());
+    } catch {
+      return; // mensagem que não é JSON: ignorada
     }
+    const name = rest.join('/');
+    if (kind === 'sensor') io.to(`vehicle_${vehicleId}`).emit('iot:sensor', { vehicleId, sensor: name, data });
+    if (kind === 'device') io.to(`vehicle_${vehicleId}`).emit('iot:device', { vehicleId, device: name, data });
   });
 
-  client.on('error', (err) => console.error('MQTT error:', err));
+  client.on('error', (err) => console.error('Erro MQTT:', err.message));
 
-  return { io, mqttClient: client };
+  return { io, mqttClient: client as MqttClient | null };
 }

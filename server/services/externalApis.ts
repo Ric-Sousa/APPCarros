@@ -23,17 +23,6 @@ export interface WeatherData {
   recommendations: string[];
 }
 
-export interface TrafficData {
-  routeOptimization: {
-    fuelSavings: number;
-    timeReduction: number;
-    alternativeRoute: string;
-    distance: number;
-    duration: number;
-  };
-  congestionLevel: 'low' | 'medium' | 'high';
-}
-
 export interface MaintenancePartPrices {
   oilPrices: Array<{ brand: string; type: string; price: number; shop: string; availability: boolean }>;
   tirePrices: Array<{ brand: string; size: string; price: number; shop: string; stock: number }>;
@@ -103,46 +92,6 @@ export async function getWeatherImpact(location: string): Promise<Sourced<Weathe
   };
 }
 
-export async function getTrafficOptimization(origin: string, destination: string): Promise<Sourced<TrafficData>> {
-  const apiKey = key('OPENROUTESERVICE_API_KEY');
-  if (apiKey) {
-    try {
-      const [from, to] = await Promise.all([geocodeText(`${origin}, Portugal`), geocodeText(`${destination}, Portugal`)]);
-      if (from[0] && to[0]) {
-        const { data } = await axios.get('https://api.openrouteservice.org/v2/directions/driving-car', {
-          params: { api_key: apiKey, start: `${from[0].lng},${from[0].lat}`, end: `${to[0].lng},${to[0].lat}` },
-          timeout: 15_000,
-        });
-        const summary = data.features?.[0]?.properties?.summary ?? data.routes?.[0]?.summary;
-        if (summary) {
-          return {
-            data: {
-              routeOptimization: {
-                fuelSavings: 0,
-                timeReduction: 0,
-                alternativeRoute: 'Rota principal: melhor opção disponível',
-                distance: Math.round(summary.distance / 1000),
-                duration: Math.round(summary.duration / 60),
-              },
-              congestionLevel: summary.duration > 3600 ? 'high' : summary.duration > 1800 ? 'medium' : 'low',
-            },
-            demo: false,
-          };
-        }
-      }
-    } catch (error) {
-      console.error('Erro na API OpenRouteService:', error instanceof Error ? error.message : error);
-    }
-  }
-  return {
-    data: {
-      routeOptimization: { fuelSavings: 0, timeReduction: 0, alternativeRoute: 'Dados de tráfego indisponíveis', distance: 0, duration: 0 },
-      congestionLevel: 'low',
-    },
-    demo: true,
-  };
-}
-
 const haversineKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const h = Math.sin(toRad(b.lat - a.lat) / 2) ** 2 +
@@ -179,6 +128,14 @@ export async function getRouteByCoords(
   return { distanceKm: Number(haversineKm(start, end).toFixed(2)), durationMin: 0 };
 }
 
+// O Nominatim só permite 1 pedido por segundo por servidor: os pedidos esperam pela sua vez
+let nominatimNext = 0;
+async function nominatimTurn() {
+  const wait = Math.max(0, nominatimNext - Date.now());
+  nominatimNext = Date.now() + wait + 1100;
+  if (wait) await new Promise((r) => setTimeout(r, wait));
+}
+
 /** Geocoding (OpenRouteService com chave, senão Nominatim). */
 export async function geocodeText(q: string): Promise<Array<{ lat: number; lng: number; label: string }>> {
   try {
@@ -194,6 +151,7 @@ export async function geocodeText(q: string): Promise<Array<{ lat: number; lng: 
         label: f.properties.label || f.properties.name || q,
       }));
     }
+    await nominatimTurn();
     const { data } = await axios.get('https://nominatim.openstreetmap.org/search', {
       params: { format: 'json', q, limit: 5 },
       headers: { 'Accept-Language': 'pt', 'User-Agent': 'LogiCar/1.0' },

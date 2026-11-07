@@ -1,7 +1,6 @@
 import type { UseFormReturn } from "react-hook-form";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** Inspection / IUC / insurance due dates of the add-vehicle form. */
 export default function VehicleDatesFields({ form }: { form: UseFormReturn<any> }) {
@@ -31,7 +30,7 @@ export default function VehicleDatesFields({ form }: { form: UseFormReturn<any> 
             )}
           />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
               name="iucDue"

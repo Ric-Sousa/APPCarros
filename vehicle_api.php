@@ -6,34 +6,65 @@ use Symfony\Component\Panther\Client;
 use Facebook\WebDriver\WebDriverKeys;
 
 header('Content-Type: application/json');
-// CORS: allow origin configurable via env, fallback to '*'
-$allowedOrigin = getenv('ALLOWED_ORIGIN') ?: '*';
-header('Access-Control-Allow-Origin: ' . $allowedOrigin);
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+// Sem CORS: este serviço só é chamado pelo servidor da aplicação LogiCar, nunca por browsers.
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    exit(0);
+// Registo fora da pasta pública (o antigo scraping_log.txt ficava acessível pela web).
+define('API_LOG_FILE', getenv('VEHICLE_API_LOG') ?: sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'logicar-vehicle-api.log');
+function api_log($message) {
+    file_put_contents(API_LOG_FILE, date('Y-m-d H:i:s') . ': ' . $message . "\n", FILE_APPEND);
 }
+// As matrículas são dados pessoais: no registo só aparecem os 2 primeiros caracteres.
+function mask_plate($plate) {
+    return substr((string) $plate, 0, 2) . '***';
+}
+function api_error($status, $message) {
+    http_response_code($status);
+    echo json_encode(['success' => false, 'error' => $message]);
+    exit;
+}
+
+// Segredo partilhado com a aplicação (header X-Api-Key). Definir VEHICLE_API_KEY no servidor PHP
+// e o mesmo valor no .env da aplicação. Sem ele, qualquer pessoa pode usar este serviço.
+$expectedKey = getenv('VEHICLE_API_KEY');
+if ($expectedKey !== false && $expectedKey !== '') {
+    $givenKey = $_SERVER['HTTP_X_API_KEY'] ?? '';
+    if (!hash_equals($expectedKey, $givenKey)) {
+        api_error(401, 'Não autorizado');
+    }
+}
+
+// Limite por IP: cada pedido abre um Chrome (VEHICLE_API_RATE_LIMIT pedidos em 15 minutos, 30 por omissão).
+$limit = (int) (getenv('VEHICLE_API_RATE_LIMIT') ?: 30);
+$rateFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'logicar-rate-' . md5($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+$now = time();
+$hits = array_filter(
+    is_file($rateFile) ? array_map('intval', file($rateFile, FILE_IGNORE_NEW_LINES)) : [],
+    fn($t) => $t > $now - 900
+);
+if (count($hits) >= $limit) {
+    api_error(429, 'Demasiados pedidos. Tente novamente mais tarde.');
+}
+$hits[] = $now;
+file_put_contents($rateFile, implode("\n", $hits), LOCK_EX);
 
 class VehicleApiService {
     private $baseUrl = 'https://infomatricula.pt/';
 
     public function getVehicleByLicensePlate($licensePlate) {
-        file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Starting scraping for license plate: ' . $licensePlate . "\n", FILE_APPEND);
+        api_log('Starting scraping for license plate: ' . mask_plate($licensePlate));
         // Try to return cached result from DB first
         try {
             $pdo = $this->getPdo();
             if ($pdo) {
                 $cached = $this->findCachedVehicle($licensePlate);
                 if ($cached !== null) {
-                    file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Returning cached data for license plate: ' . $licensePlate . "\n", FILE_APPEND);
+                    api_log('Returning cached data for license plate: ' . mask_plate($licensePlate));
                     return $cached;
                 }
             }
         } catch (Exception $e) {
             // If DB is unavailable, just continue with scraping
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': DB cache check error: ' . $e->getMessage() . "\n", FILE_APPEND);
+            api_log('DB cache check error: ' . $e->getMessage());
         }
         try {
             // Create Chrome client. Avoid insecure flags like --disable-web-security.
@@ -54,7 +85,7 @@ class VehicleApiService {
             sleep(3);
 
             $initialContent = $crawler->html();
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Initial page length: ' . strlen($initialContent) . "\n", FILE_APPEND);
+            api_log('Initial page length: ' . strlen($initialContent));
 
             // Handle cookie consent
             try {
@@ -64,13 +95,13 @@ class VehicleApiService {
                         if (stripos($button->getText(), 'Consentir') !== false) {
                             $button->click();
                             sleep(2);
-                            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Consent button clicked' . "\n", FILE_APPEND);
+                            api_log('Consent button clicked');
                             break;
                         }
                     }
                 }
             } catch (Exception $e) {
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Cookie consent error: ' . $e->getMessage() . "\n", FILE_APPEND);
+                api_log('Cookie consent error: ' . $e->getMessage());
             }
 
             // Find search input field - using more specific selectors
@@ -89,7 +120,7 @@ class VehicleApiService {
                 try {
                     $searchInput = $crawler->filter($selector);
                     if ($searchInput->count() > 0) {
-                        file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Found input with selector: ' . $selector . "\n", FILE_APPEND);
+                        api_log('Found input with selector: ' . $selector);
                         break;
                     }
                 } catch (Exception $e) {
@@ -98,7 +129,7 @@ class VehicleApiService {
             }
 
             if (!$searchInput || $searchInput->count() === 0) {
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': No search input found' . "\n", FILE_APPEND);
+                api_log('No search input found');
                 throw new Exception('Campo de pesquisa não encontrado');
             }
 
@@ -117,9 +148,9 @@ class VehicleApiService {
                 $searchInputElement->sendKeys($licensePlate);
                 
                 sleep(1);
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': License plate typed: ' . $licensePlate . "\n", FILE_APPEND);
+                api_log('License plate typed: ' . mask_plate($licensePlate));
             } catch (Exception $e) {
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Error interacting with input: ' . $e->getMessage() . "\n", FILE_APPEND);
+                api_log('Error interacting with input: ' . $e->getMessage());
                 $client->quit();
                 throw new Exception('Erro ao interagir com o campo de pesquisa');
             }
@@ -139,7 +170,7 @@ class VehicleApiService {
                     $submitButton = $crawler->filter($selector);
                     if ($submitButton->count() > 0) {
                         $submitButton->first()->click();
-                        file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Submit button clicked with selector: ' . $selector . "\n", FILE_APPEND);
+                        api_log('Submit button clicked with selector: ' . $selector);
                         break;
                     }
                 } catch (Exception $e) {
@@ -149,7 +180,7 @@ class VehicleApiService {
 
             if (!$submitButton || $submitButton->count() === 0) {
                 $searchInputElement->sendKeys(WebDriverKeys::ENTER);
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Sent Enter on input' . "\n", FILE_APPEND);
+                api_log('Sent Enter on input');
             }
             // Wait for results to load - prefer explicit wait in production
             sleep(10);
@@ -162,14 +193,14 @@ class VehicleApiService {
                 $content = $crawler->html();
             }
 
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Final page length: ' . strlen($content) . "\n", FILE_APPEND);
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Final page contains license plate: ' . (strpos($content, $licensePlate) !== false ? 'yes' : 'no') . "\n", FILE_APPEND);
+            api_log('Final page length: ' . strlen($content));
+            api_log('Final page contains license plate: ' . (strpos($content, mask_plate($licensePlate)) !== false ? 'yes' : 'no'));
 
             if (strpos($content, $licensePlate) !== false && strlen($content) > 10000) {
                 $resultPage = $content;
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Data found successfully' . "\n", FILE_APPEND);
+                api_log('Data found successfully');
             } else {
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Data not found' . "\n", FILE_APPEND);
+                api_log('Data not found');
             }
 
             if (!$resultPage) {
@@ -185,17 +216,17 @@ class VehicleApiService {
                     $pdo = $this->getPdo();
                     if ($pdo) {
                         $this->saveCachedVehicle($licensePlate, $extracted);
-                        file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Saved scraped data to cache for: ' . $licensePlate . "\n", FILE_APPEND);
+                        api_log('Saved scraped data to cache for: ' . mask_plate($licensePlate));
                     }
                 }
             } catch (Exception $e) {
-                file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Error saving cache: ' . $e->getMessage() . "\n", FILE_APPEND);
+                api_log('Error saving cache: ' . $e->getMessage());
             }
 
             return $extracted;
 
         } catch (Exception $e) {
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': Exception in getVehicleByLicensePlate: ' . $e->getMessage() . "\n", FILE_APPEND);
+            api_log('Exception in getVehicleByLicensePlate: ' . $e->getMessage());
             return null;
         } finally {
             // Ensure the client is always closed to free resources
@@ -272,7 +303,7 @@ class VehicleApiService {
     
         // Fallback to text-based extraction if DOM extraction failed
         if (empty($data['brand']) && empty($data['model'])) {
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': DOM extraction failed, trying text patterns' . "\n", FILE_APPEND);
+            api_log('DOM extraction failed, trying text patterns');
             
             // Use the improved text extraction
             $data['brand'] = $this->extractFieldText($pageText, ['Marca']);
@@ -322,7 +353,7 @@ class VehicleApiService {
             return $data;
         } else {
             file_put_contents(__DIR__ . '/debug_page.html', $pageText);
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': No valid data found, page saved to debug_page.html' . "\n", FILE_APPEND);
+            api_log('No valid data found, page saved to debug_page.html');
             return null;
         }
     }
@@ -568,7 +599,7 @@ class VehicleApiService {
             ];
             return new PDO($dsn, $user, $pass, $options);
         } catch (Exception $e) {
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': PDO connection error: ' . $e->getMessage() . "\n", FILE_APPEND);
+            api_log('PDO connection error: ' . $e->getMessage());
             return null;
         }
     }
@@ -594,7 +625,7 @@ class VehicleApiService {
                 return $data;
             }
         } catch (Exception $e) {
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': findCachedVehicle error: ' . $e->getMessage() . "\n", FILE_APPEND);
+            api_log('findCachedVehicle error: ' . $e->getMessage());
         }
         return null;
     }
@@ -636,7 +667,7 @@ class VehicleApiService {
             ]);
             return true;
         } catch (Exception $e) {
-            file_put_contents(__DIR__ . '/scraping_log.txt', date('Y-m-d H:i:s') . ': saveCachedVehicle error: ' . $e->getMessage() . "\n", FILE_APPEND);
+            api_log('saveCachedVehicle error: ' . $e->getMessage());
             return false;
         }
     }

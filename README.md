@@ -6,9 +6,9 @@ Aplicação web para gestão de veículos particulares: frota pessoal, manutenç
 
 | Área | O que faz | Fonte dos dados |
 |---|---|---|
-| Autenticação | Registo, login (JWT), perfil, foto de perfil, preferências | BD |
+| Conta | Registo, login (JWT), perfil, foto de perfil, preferências, alterar palavra-passe, eliminar conta e todos os dados | BD |
 | Veículos | CRUD, consulta de dados por matrícula, foto automática ou à escolha (com o ano certo quando possível), foto própria | BD + serviço de matrículas + Wikimedia Commons + Unsplash |
-| Manutenção | Histórico, marcações, alertas, risco preditivo (óleo/pneus/inspeção) | BD |
+| Manutenção | Histórico, marcações, alertas automáticos (óleo e pneus por km; inspeção, IUC e seguro por data), risco preditivo | BD |
 | Combustível | Abastecimentos (criar/editar/apagar), consumo, comparador de postos | BD + OpenStreetMap |
 | Despesas | Registo manual e OCR de recibos (imagem/PDF) | BD + Tesseract/pdf-parse |
 | Documentos | Upload, consulta e remoção (acesso só do dono) | BD + disco |
@@ -62,7 +62,7 @@ npm run build               # dist/public (cliente) + dist/index.js (servidor)
 npm start                   # node dist/index.js
 ```
 
-O build não precisa da base de dados. Em produção, coloque o servidor atrás de HTTPS.
+O build não precisa da base de dados. O servidor responde em `GET /api/health` (para monitorização) e termina de forma ordenada com SIGTERM/SIGINT. Em produção, coloque o servidor atrás de HTTPS.
 
 ## Variáveis de ambiente
 
@@ -73,11 +73,13 @@ O build não precisa da base de dados. Em produção, coloque o servidor atrás 
 | `DB_FILE` | Não | Ficheiro SQLite |
 | `DB_SSL` | Não | PostgreSQL com SSL |
 | `DB_INSTANCE`, `DB_ENCRYPT`, `DB_TRUST_SERVER_CERTIFICATE` | Não | Opções do SQL Server |
-| `JWT_SECRET` | Sim | Segredo dos tokens. Sem ele o servidor não arranca |
+| `JWT_SECRET` | Sim | Segredo dos tokens, com pelo menos 32 caracteres. Sem ele o servidor não arranca |
 | `JWT_EXPIRES_IN` | Não | Validade do token (por omissão `1h`) |
 | `PORT` | Não | Porta HTTP (por omissão `5000`) |
-| `CORS_ORIGINS` | Não | Origens permitidas, separadas por vírgulas |
-| `VEHICLE_API_URL` | Não | URL do `vehicle_api.php` (deve ser HTTPS) |
+| `CORS_ORIGINS` | Não | Origens permitidas, separadas por vírgulas (a própria app é sempre permitida, mesmo por IP na rede local) |
+| `TRUST_PROXY` | Em produção atrás de proxy | Número de proxies (ex.: `1`) ou `true`. Sem isto, o limite de tentativas de login trata todos os clientes como um só |
+| `VEHICLE_API_URL` | Não | URL do `vehicle_api.php` (deve ser HTTPS). Sem ele, a consulta de matrícula fica desligada |
+| `VEHICLE_API_KEY` | Recomendado | Segredo partilhado com o `vehicle_api.php` (definir o mesmo valor no servidor PHP) |
 | `UNSPLASH_ACCESS_KEY` | Não | Fotos do Unsplash nas sugestões (o Wikimedia Commons não precisa de chave) |
 | `OPENCHARGEMMAP_API_KEY` | Não | Postos de carregamento EV |
 | `OPENROUTESERVICE_API_KEY` | Não | Rotas e geocoding (sem chave: linha reta e Nominatim) |

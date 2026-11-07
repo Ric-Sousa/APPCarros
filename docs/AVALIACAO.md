@@ -6,6 +6,74 @@ Este documento tem duas avaliações: a **2.ª** (atual, por corrigir) e a **1.�
 
 # 2.ª avaliação (2026-11-06, depois das correções e do suporte a vários motores de BD)
 
+## Estado das correções (2026-11-07)
+
+**Todos os pontos abaixo foram corrigidos**, exceto os assinalados em "Pendente".
+
+| Verificação | Resultado |
+|---|---|
+| `tsc` (incluindo `--noUnusedLocals --noUnusedParameters`) | ✅ 0 erros |
+| `npm test` | ✅ 27 testes. Os 18 de integração passam em **SQLite**, **SQL Server 2022** e **PostgreSQL** (PGlite) |
+| `npm audit --omit=dev` | ✅ 0 vulnerabilidades (eram 27); `drizzle-orm` 0.45 |
+| `npm run build` | ✅ JS principal com 352 kB |
+| Navegação automática no Edge | ✅ Sem erros nem avisos em todas as páginas, separadores e botões; sem transbordo a 390 px; sem fundos claros no modo escuro |
+| Fluxos no browser | ✅ Alerta de IUC no Dashboard, marcação visível no Dashboard e na página do veículo, exportação CSV, viagem ativa retomada |
+
+**Resumo do que mudou:**
+- **Segurança (S1 a S7):**
+  - `receiptUrl` só é definido pelo servidor, e `imageUrl` só aceita `/uploads/vehicle-<uuid>` ou `https://`;
+  - fotos apagadas só quando nenhum veículo as usa;
+  - dependências atualizadas;
+  - `TRUST_PROXY` e limitadores separados (no login só contam as falhas);
+  - comparação só com 5 ou mais veículos iguais;
+  - PHP com segredo partilhado, rate limit, sem CORS e registo fora da pasta pública;
+  - `VEHICLE_API_URL` sem valor por omissão (502/503 quando o serviço falha ou não está configurado).
+- **Funcionalidades (F1 a F20):**
+  - alertas gerados a partir dos prazos;
+  - marcações e reservas listadas;
+  - consulta de matrícula com os campos traduzidos;
+  - códigos de combustível únicos (`shared/fuel.ts`);
+  - IoT e postos de carregamento com o formato certo;
+  - validação de números e datas;
+  - invalidações de cache;
+  - "Depósito cheio" e um único cálculo de consumo (`shared/calc.ts`);
+  - gravador de km que retoma a viagem e mostra histórico;
+  - despesas com portagens/estacionamento, média real, exportação CSV e análise;
+  - calculadora EV para veículos a combustão;
+  - mensagens de 429;
+  - 404 em ficheiros inexistentes e `/api/health`;
+  - ficheiros apagados com o veículo ou a conta;
+  - documentos abrem no Safari;
+  - CORS para a própria app.
+- **Conta:**
+  - alterar a palavra-passe e eliminar a conta;
+  - login com tempo constante;
+  - o socket expira com o token;
+  - `JWT_SECRET` com pelo menos 32 caracteres.
+- **Interface:**
+  - telemóvel sem transbordo;
+  - modo escuro com tokens do tema;
+  - pt-PT em toda a interface (incluindo a página 404);
+  - descrições em todos os diálogos e `aria-label` nos botões só com ícone;
+  - fim do `alert()`/`prompt()`;
+  - seletores sempre controlados;
+  - Leaflet carregado só no Planeador.
+- **Operação:**
+  - `TZ=UTC` em todos os motores;
+  - encerramento ordenado;
+  - limites nas rotas pesadas;
+  - Nominatim a 1 pedido/s;
+  - foto automática com tempo máximo de 8 s;
+  - código morto removido (esquemas, relações, tabelas `trip_records`/`vehicle_specs`, rotas `/external/*` sem uso, componentes e contexto não usados).
+- **Bugs extra encontrados pelos testes:**
+  - a cilindrada "599 cm3" era lida como 5993;
+  - os helpers de validação colidiam com os construtores de colunas do Drizzle.
+
+**Pendente:**
+1. **No servidor PHP:** definir `VEHICLE_API_KEY` (o mesmo valor no `.env` da app) e pôr HTTPS. Até lá, o `.env` local usa o endereço HTTP antigo e aparece um aviso no arranque.
+2. **Testar com o MySQL real:** foi o único motor que não deu para testar aqui.
+3. **Opcional:** o `EnhancedRecommendations` (514 linhas) ainda podia ser dividido; não há tabela de dispositivos IoT (a lista continua a ser de demonstração).
+
 ## Como foi feita
 
 | Verificação | Resultado |

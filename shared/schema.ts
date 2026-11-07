@@ -1,7 +1,7 @@
 import { mysqlTable, varchar, int, timestamp, text, decimal, boolean, datetime, json, unique } from "drizzle-orm/mysql-core";
-import { relations } from "drizzle-orm";
-import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { FUEL_CODES, normalizeFuelType } from "./fuel";
 
 // Users table
 export const users = mysqlTable("users", {
@@ -130,25 +130,6 @@ export const mileageTrips = mysqlTable("mileage_trips", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Trip records table
-export const tripRecords = mysqlTable("trip_records", {
-  id: varchar("id", { length: 255 }).primaryKey(),
-  vehicleId: varchar("vehicle_id", { length: 255 }).notNull(),
-  startDate: datetime("start_date").notNull(),
-  endDate: datetime("end_date"),
-  startMileage: int("start_mileage").notNull(),
-  endMileage: int("end_mileage"),
-  startLocation: varchar("start_location", { length: 255 }),
-  endLocation: varchar("end_location", { length: 255 }),
-  purpose: varchar("purpose", { length: 50 }).notNull(), // business, personal, vacation
-  totalDistance: int("total_distance"),
-  fuelCost: decimal("fuel_cost", { precision: 10, scale: 2 }),
-  tollCost: decimal("toll_cost", { precision: 10, scale: 2 }),
-  parkingCost: decimal("parking_cost", { precision: 10, scale: 2 }),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
 // Expense records table
 export const expenseRecords = mysqlTable("expense_records", {
   id: varchar("id", { length: 255 }).primaryKey(),
@@ -163,28 +144,6 @@ export const expenseRecords = mysqlTable("expense_records", {
   mileage: int("mileage"),
   isBusinessExpense: boolean("is_business_expense").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
-
-// Vehicle specifications table
-export const vehicleSpecs = mysqlTable("vehicle_specs", {
-  id: varchar("id", { length: 255 }).primaryKey(),
-  vehicleId: varchar("vehicle_id", { length: 255 }).notNull(),
-  engineSize: varchar("engine_size", { length: 50 }),
-  engineType: varchar("engine_type", { length: 100 }),
-  horsePower: int("horse_power"),
-  transmission: varchar("transmission", { length: 50 }),
-  driveType: varchar("drive_type", { length: 50 }),
-  weight: int("weight"), // in kg
-  fuelCapacity: int("fuel_capacity"), // in liters
-  averageFuelConsumption: decimal("average_fuel_consumption", { precision: 4, scale: 2 }), // l/100km
-  co2Emissions: int("co2_emissions"), // g/km
-  euroStandard: varchar("euro_standard", { length: 20 }),
-  color: varchar("color", { length: 50 }),
-  bodyType: varchar("body_type", { length: 50 }),
-  doors: int("doors"),
-  seats: int("seats"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
 // Documents table
@@ -266,458 +225,159 @@ export const routePlans = mysqlTable("route_plans", {
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
-// Relations
-export const usersRelations = relations(users, ({ many }) => ({
-  vehicles: many(vehicles),
-  maintenanceAppointments: many(maintenanceAppointments),
-  chargingStationReservations: many(chargingStationReservations),
-}));
+// ---------- Validação dos pedidos (zod) ----------
+// Regras comuns: números têm de ser números; datas aceitam "AAAA-MM-DD", ISO, "DD/MM/AAAA", "MM/AAAA" e "AAAA";
+// campos opcionais aceitam "" e null como "sem valor". Nunca se aceitam do cliente: id, userId, createdAt, updatedAt.
 
-export const vehiclesRelations = relations(vehicles, ({ one, many }) => ({
-  user: one(users, {
-    fields: [vehicles.userId],
-    references: [users.id],
-  }),
-  maintenanceRecords: many(maintenanceRecords),
-  alerts: many(alerts),
-  fuelRecords: many(fuelRecords),
-  tripRecords: many(tripRecords),
-  mileageTrips: many(mileageTrips),
-  expenseRecords: many(expenseRecords),
-  specs: one(vehicleSpecs),
-  documents: many(documents),
-  maintenanceAppointments: many(maintenanceAppointments),
-  chargingStationReservations: many(chargingStationReservations),
-}));
+const BLANK = new Set(['', 'null', 'undefined', 'Não encontrado']);
+const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === 'string' && BLANK.has(v.trim()));
 
-export const maintenanceRecordsRelations = relations(maintenanceRecords, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [maintenanceRecords.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+const utcDate = (y: number, m: number, d: number) => {
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d ? date : new Date(NaN);
+};
 
-export const alertsRelations = relations(alerts, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [alerts.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+/** Converte os formatos de data aceites; devolve Invalid Date se não reconhecer (o zod rejeita-a). */
+export function parseDateInput(v: unknown): unknown {
+  if (v instanceof Date || typeof v !== 'string') return v;
+  const s = v.trim();
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/))) return utcDate(+m[3], +m[2], +m[1]);
+  if ((m = s.match(/^(\d{1,2})\/(\d{4})$/))) return utcDate(+m[2], +m[1], 1);
+  if ((m = s.match(/^(\d{4})$/))) return utcDate(+m[1], 1, 1);
+  if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/))) return utcDate(+m[1], +m[2], +m[3]);
+  return /^\d{4}-\d{2}-\d{2}T/.test(s) ? new Date(s) : new Date(NaN);
+}
 
-export const fuelRecordsRelations = relations(fuelRecords, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [fuelRecords.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+const toNumber = (v: unknown) => (typeof v === 'string' ? Number(v.trim().replace(',', '.')) : v);
 
-export const tripRecordsRelations = relations(tripRecords, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [tripRecords.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+const dateSchema = z.date({ error: 'Data inválida' });
+/** Data obrigatória. */
+const zDate = z.preprocess(parseDateInput, dateSchema);
+/** Data opcional na criação. */
+const optDate = z.preprocess((v) => (isBlank(v) ? undefined : parseDateInput(v)), dateSchema.optional());
+/** Data numa atualização: ausente não mexe; "" ou null limpa. */
+const patchDate = z.preprocess((v) => (v === undefined ? undefined : isBlank(v) ? null : parseDateInput(v)), dateSchema.nullable().optional());
 
-export const mileageTripsRelations = relations(mileageTrips, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [mileageTrips.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+const numberSchema = (min: number, max: number, int: boolean) => {
+  let n = z.number({ error: 'Número inválido' }).min(min, `Tem de ser ≥ ${min}`).max(max, `Tem de ser ≤ ${max}`);
+  if (int) n = n.int('Tem de ser um número inteiro');
+  return n;
+};
+const zInt = (min = 0, max = 10_000_000) => z.preprocess(toNumber, numberSchema(min, max, true));
+const optInt = (min = 0, max = 10_000_000) => z.preprocess((v) => (isBlank(v) ? undefined : toNumber(v)), numberSchema(min, max, true).optional());
+const patchInt = (min = 0, max = 10_000_000) => z.preprocess((v) => (v === undefined ? undefined : isBlank(v) ? null : toNumber(v)), numberSchema(min, max, true).nullable().optional());
+/** Colunas DECIMAL: valida como número e guarda como texto (sem perder precisão). */
+const zDecimal = (min = 0, max = 1_000_000) => z.preprocess(toNumber, numberSchema(min, max, false)).transform(String);
+const optDecimal = (min = 0, max = 1_000_000) => z.preprocess((v) => (isBlank(v) ? undefined : toNumber(v)), numberSchema(min, max, false).optional()).transform((n) => (n === undefined ? undefined : String(n)));
 
-export const expenseRecordsRelations = relations(expenseRecords, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [expenseRecords.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+const zTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Hora inválida (HH:MM)');
+const optText = (max: number) => z.preprocess((v) => (isBlank(v) ? undefined : v), z.string().trim().max(max).optional());
+const zFuel = z.preprocess(normalizeFuelType, z.enum(FUEL_CODES, { error: 'Combustível inválido' }));
+const optFuel = z.preprocess((v) => (isBlank(v) ? undefined : normalizeFuelType(v) ?? v), z.enum(FUEL_CODES, { error: 'Combustível inválido' }).optional());
 
-export const vehicleSpecsRelations = relations(vehicleSpecs, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [vehicleSpecs.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+/** Fotos aceites: as nossas (/uploads/vehicle-<uuid>.ext) ou URLs https (Commons/Unsplash). */
+export const OWN_VEHICLE_PHOTO = /^\/uploads\/vehicle-[0-9a-f-]{36}\.(jpg|png|webp)$/;
+const httpsUrl = z.string().max(2000).regex(/^https:\/\/[^\s"'<>]+$/, 'URL inválido');
+const photoUrl = z.string().max(2000).refine((v) => OWN_VEHICLE_PHOTO.test(v) || /^https:\/\/[^\s"'<>]+$/.test(v), 'URL de foto inválido');
 
-export const documentsRelations = relations(documents, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [documents.vehicleId],
-    references: [vehicles.id],
-  }),
-}));
+const vehicleFields = (mode: 'create' | 'update') => {
+  const d = mode === 'create' ? optDate : patchDate;
+  const n = mode === 'create' ? optInt : patchInt;
+  const nullable = <T extends z.ZodTypeAny>(s: T) => (mode === 'create' ? s.optional() : s.nullable().optional());
+  return {
+    licensePlate: z.string().trim().min(1, 'Matrícula obrigatória').max(20).transform((s) => s.toUpperCase()),
+    brand: z.string().trim().min(1, 'Marca obrigatória').max(100),
+    model: z.string().trim().min(1, 'Modelo obrigatório').max(100),
+    year: zInt(1900, 2100),
+    currentMileage: zInt(0),
+    fuelType: optFuel,
+    registrationDate: d, lastOilChange: d, lastTireChange: d, inspectionDue: d, iucDue: d, insuranceDue: d,
+    lastOilChangeMileage: n(), oilChangeInterval: n(0, 200_000), lastTireChangeMileage: n(), tireChangeInterval: n(0, 500_000),
+    powerCV: n(0, 5000), powerKW: n(0, 5000), engineDisplacement: n(0, 20_000),
+    imageUrl: nullable(photoUrl), imageCredit: nullable(z.string().max(500)), imageCreditUrl: nullable(httpsUrl),
+  };
+};
 
-export const maintenanceAppointmentsRelations = relations(maintenanceAppointments, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [maintenanceAppointments.vehicleId],
-    references: [vehicles.id],
-  }),
-  user: one(users, {
-    fields: [maintenanceAppointments.userId],
-    references: [users.id],
-  }),
-}));
+const SERVER_FIELDS = { id: true, createdAt: true } as const;
 
-export const chargingStationReservationsRelations = relations(chargingStationReservations, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [chargingStationReservations.vehicleId],
-    references: [vehicles.id],
-  }),
-  user: one(users, {
-    fields: [chargingStationReservations.userId],
-    references: [users.id],
-  }),
-}));
+export const createVehicleSchema = createInsertSchema(vehicles).omit({ ...SERVER_FIELDS, userId: true, updatedAt: true }).extend(vehicleFields('create'));
+export const updateVehicleSchema = createInsertSchema(vehicles).omit({ ...SERVER_FIELDS, userId: true, updatedAt: true }).extend(vehicleFields('update')).partial();
 
-// Zod schemas
-export const insertUserSchema = createInsertSchema(users);
-export const selectUserSchema = createSelectSchema(users);
-export const insertVehicleSchema = createInsertSchema(vehicles).extend({
-  lastOilChange: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  lastOilChangeMileage: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  oilChangeInterval: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  lastTireChange: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  lastTireChangeMileage: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  tireChangeInterval: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  inspectionDue: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  iucDue: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  insuranceDue: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  registrationDate: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '' || val === 'undefined' || val === 'null' || val === 'Não encontrado') return undefined;
-    
-    // Handle MM/yyyy format
-    const mmYyyyMatch = val.match(/^(\d{2})\/(\d{4})$/);
-    if (mmYyyyMatch) {
-      const [, month, year] = mmYyyyMatch;
-      // Create date with first day of the month
-      const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-      // Validate the created date
-      if (isNaN(date.getTime())) {
-        console.warn(`Invalid MM/yyyy date format: ${val}, returning undefined`);
-        return undefined;
-      }
-      return date;
-    }
-    
-    // Handle Portuguese date formats like "dd/mm/yyyy" or "dd-mm-yyyy"
-    const ddMmYyyyMatch = val.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-    if (ddMmYyyyMatch) {
-      const [, day, month, year] = ddMmYyyyMatch;
-      const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-      if (isNaN(date.getTime())) {
-        console.warn(`Invalid dd/mm/yyyy date format: ${val}, returning undefined`);
-        return undefined;
-      }
-      return date;
-    }
-    
-    // Handle year only format
-    const yearOnlyMatch = val.match(/^(\d{4})$/);
-    if (yearOnlyMatch) {
-      const year = parseInt(yearOnlyMatch[1]);
-      const date = new Date(year, 0, 1); // January 1st of that year
-      if (isNaN(date.getTime())) {
-        console.warn(`Invalid year format: ${val}, returning undefined`);
-        return undefined;
-      }
-      return date;
-    }
-    
-    // Fallback to regular date parsing
-    const date = new Date(val);
-    if (isNaN(date.getTime())) {
-      console.warn(`Invalid date format: ${val}, returning undefined`);
-      return undefined;
-    }
-    return date;
-  }),
+const fuelRecordFields = {
+  date: zDate,
+  mileage: zInt(0),
+  liters: zDecimal(0.01, 10_000),
+  costPerLiter: zDecimal(0, 100),
+  totalCost: zDecimal(0, 100_000),
+  fuelType: zFuel,
+  fullTank: z.boolean().optional(),
+};
+export const createFuelRecordSchema = createInsertSchema(fuelRecords).omit(SERVER_FIELDS).extend(fuelRecordFields);
+export const updateFuelRecordSchema = createInsertSchema(fuelRecords).omit({ ...SERVER_FIELDS, vehicleId: true }).extend(fuelRecordFields).partial();
+
+const TRIP_STATUS = z.enum(['active', 'paused', 'completed']);
+export const createMileageTripSchema = createInsertSchema(mileageTrips).omit(SERVER_FIELDS).extend({
+  startTime: zDate,
+  endTime: optDate,
+  startMileage: zInt(0),
+  endMileage: optInt(0),
+  duration: optInt(0),
+  totalDistance: optInt(0),
+  status: TRIP_STATUS.default('active'),
 });
-export const selectVehicleSchema = createSelectSchema(vehicles);
-
-// Update vehicle schema that accepts strings for date fields and transforms them
-// id, userId e timestamps nunca vêm do cliente
-export const updateVehicleSchema = createSelectSchema(vehicles).partial().omit({
-  id: true,
-  userId: true,
-  createdAt: true,
-  updatedAt: true,
-}).extend({
-  lastOilChange: z.string().optional().nullable().transform((val) => {
-    if (val === undefined) return undefined; // campo ausente: não mexer
-    if (!val) return null;
-    return new Date(val);
-  }),
-  lastTireChange: z.string().optional().nullable().transform((val) => {
-    if (val === undefined) return undefined; // campo ausente: não mexer
-    if (!val) return null;
-    return new Date(val);
-  }),
-  inspectionDue: z.string().optional().nullable().transform((val) => {
-    if (val === undefined) return undefined; // campo ausente: não mexer
-    if (!val) return null;
-    return new Date(val);
-  }),
-  iucDue: z.string().optional().nullable().transform((val) => {
-    if (val === undefined) return undefined; // campo ausente: não mexer
-    if (!val) return null;
-    return new Date(val);
-  }),
-  insuranceDue: z.string().optional().nullable().transform((val) => {
-    if (val === undefined) return undefined; // campo ausente: não mexer
-    if (!val) return null;
-    return new Date(val);
-  }),
-  registrationDate: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '' || val === 'undefined' || val === 'null' || val === 'Não encontrado') return undefined;
-    
-    // Handle MM/yyyy format
-    const mmYyyyMatch = val.match(/^(\d{2})\/(\d{4})$/);
-    if (mmYyyyMatch) {
-      const [, month, year] = mmYyyyMatch;
-      // Create date with first day of the month
-      const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-      return date;
-    }
-    
-    return new Date(val);
-  }),
+export const updateMileageTripSchema = z.object({
+  endTime: optDate,
+  endMileage: optInt(0),
+  duration: optInt(0),
+  totalDistance: optInt(0),
+  status: TRIP_STATUS.optional(),
+  notes: optText(2000),
 });
 
-// Custom vehicle creation schema (without id and userId which are set on server)
-export const createVehicleSchema = createInsertSchema(vehicles).omit({ 
-  id: true, 
-  userId: true 
-}).extend({
-  // Validate fuel type options
-  fuelType: z.enum(['gasoline95', 'diesel', 'electric', 'Gasolina', 'Gasóleo', 'Elétrico']).optional(),
-  // Transform date strings to Date objects
-  lastOilChange: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  lastOilChangeMileage: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  oilChangeInterval: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  lastTireChange: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  lastTireChangeMileage: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  tireChangeInterval: z.union([z.string(), z.number()]).optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return typeof val === 'string' ? parseInt(val) || null : val;
-  }),
-  inspectionDue: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  iucDue: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  insuranceDue: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-  registrationDate: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '' || val === 'undefined' || val === 'null' || val === 'Não encontrado') return undefined;
-    
-    // Handle MM/yyyy format
-    const mmYyyyMatch = val.match(/^(\d{2})\/(\d{4})$/);
-    if (mmYyyyMatch) {
-      const [, month, year] = mmYyyyMatch;
-      // Create date with first day of the month
-      const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-      // Validate the created date
-      if (isNaN(date.getTime())) {
-        console.warn(`Invalid MM/yyyy date format: ${val}, returning undefined`);
-        return undefined;
-      }
-      return date;
-    }
-    
-    // Handle Portuguese date formats like "dd/mm/yyyy" or "dd-mm-yyyy"
-    const ddMmYyyyMatch = val.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-    if (ddMmYyyyMatch) {
-      const [, day, month, year] = ddMmYyyyMatch;
-      const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-      if (isNaN(date.getTime())) {
-        console.warn(`Invalid dd/mm/yyyy date format: ${val}, returning undefined`);
-        return undefined;
-      }
-      return date;
-    }
-    
-    // Handle year only format
-    const yearOnlyMatch = val.match(/^(\d{4})$/);
-    if (yearOnlyMatch) {
-      const year = parseInt(yearOnlyMatch[1]);
-      const date = new Date(year, 0, 1); // January 1st of that year
-      if (isNaN(date.getTime())) {
-        console.warn(`Invalid year format: ${val}, returning undefined`);
-        return undefined;
-      }
-      return date;
-    }
-    
-    // Fallback to regular date parsing
-    const date = new Date(val);
-    if (isNaN(date.getTime())) {
-      console.warn(`Invalid date format: ${val}, returning undefined`);
-      return undefined;
-    }
-    return date;
-  }),
+// receiptUrl só é definido pelo servidor (rota de OCR): aceitá-lo do cliente permitia apontar para ficheiros de outros
+export const createExpenseRecordSchema = createInsertSchema(expenseRecords).omit({ ...SERVER_FIELDS, receiptUrl: true }).extend({
+  date: zDate,
+  amount: zDecimal(0, 1_000_000),
+  mileage: optInt(0),
+  type: z.string().trim().min(1).max(100),
+  category: z.string().trim().min(1).max(100),
 });
 
-// Custom fuel record creation schema (without id)
-export const createFuelRecordSchema = createInsertSchema(fuelRecords).omit({ 
-  id: true 
-}).extend({
-  date: z.string().transform((val) => new Date(val)),
-  liters: z.union([z.string(), z.number()]).transform((val) => String(val)),
-  costPerLiter: z.union([z.string(), z.number()]).transform((val) => String(val)),
-  totalCost: z.union([z.string(), z.number()]).transform((val) => String(val)),
+export const createDocumentSchema = createInsertSchema(documents).omit(SERVER_FIELDS);
+
+export const createMaintenanceRecordSchema = createInsertSchema(maintenanceRecords).omit(SERVER_FIELDS).extend({
+  performedAt: zDate,
+  mileage: optInt(0),
+  cost: optDecimal(0),
 });
 
-export const updateFuelRecordSchema = createFuelRecordSchema.omit({ vehicleId: true }).partial();
+const appointmentFields = {
+  scheduledDate: zDate,
+  scheduledTime: zTime,
+  estimatedDuration: optInt(1, 10_000),
+  estimatedCost: optDecimal(0),
+  actualCost: optDecimal(0),
+  mileageAtAppointment: optInt(0),
+};
+export const createMaintenanceAppointmentSchema = createInsertSchema(maintenanceAppointments).omit({ ...SERVER_FIELDS, updatedAt: true }).extend(appointmentFields);
+export const updateMaintenanceAppointmentSchema = createInsertSchema(maintenanceAppointments).omit({ ...SERVER_FIELDS, updatedAt: true, vehicleId: true, userId: true }).extend(appointmentFields).partial();
 
-// Custom mileage trip creation schema (without id)
-export const createMileageTripSchema = createInsertSchema(mileageTrips).omit({
-  id: true,
-  createdAt: true
-}).extend({
-  startTime: z.coerce.date(),
-  endTime: z.coerce.date().nullable().optional(),
-});
+const reservationFields = {
+  reservationDate: zDate,
+  startTime: zTime,
+  endTime: zTime,
+  estimatedChargingTime: zInt(1, 10_000),
+  estimatedCost: optDecimal(0),
+  actualCost: optDecimal(0),
+  energyDelivered: optDecimal(0),
+  batteryLevelStart: optInt(0, 100),
+  batteryLevelEnd: optInt(0, 100),
+};
+export const createChargingStationReservationSchema = createInsertSchema(chargingStationReservations).omit({ ...SERVER_FIELDS, updatedAt: true }).extend(reservationFields);
+export const updateChargingStationReservationSchema = createInsertSchema(chargingStationReservations).omit({ ...SERVER_FIELDS, updatedAt: true, vehicleId: true, userId: true }).extend(reservationFields).partial();
 
-export const updateMileageTripSchema = createMileageTripSchema.omit({ vehicleId: true }).partial();
-
-// Custom expense record creation schema (without id)
-export const createExpenseRecordSchema = createInsertSchema(expenseRecords).omit({ 
-  id: true 
-}).extend({
-  date: z.string().transform((val) => new Date(val)),
-  amount: z.union([z.string(), z.number()]).transform((val) => String(val)),
-});
-
-// Custom document creation schema (without id)
-export const createDocumentSchema = createInsertSchema(documents).omit({ 
-  id: true 
-});
-
-// Custom maintenance record creation schema (without id)
-export const createMaintenanceRecordSchema = createInsertSchema(maintenanceRecords).omit({ 
-  id: true 
-}).extend({
-  performedAt: z.string().transform((val) => new Date(val)),
-});
-
-export const createMaintenanceAppointmentSchema = createInsertSchema(maintenanceAppointments).omit({ 
-  id: true,
-  createdAt: true,
-  updatedAt: true
-}).extend({
-  scheduledDate: z.string().transform((val) => new Date(val)),
-  estimatedCost: z.union([z.string(), z.number()]).optional().transform((val) => val ? String(val) : undefined),
-  actualCost: z.union([z.string(), z.number()]).optional().transform((val) => val ? String(val) : undefined),
-});
-
-export const createChargingStationReservationSchema = createInsertSchema(chargingStationReservations).omit({ 
-  id: true,
-  createdAt: true,
-  updatedAt: true
-}).extend({
-  reservationDate: z.string().transform((val) => new Date(val)),
-  estimatedCost: z.union([z.string(), z.number()]).optional().transform((val) => val ? String(val) : undefined),
-  actualCost: z.union([z.string(), z.number()]).optional().transform((val) => val ? String(val) : undefined),
-  energyDelivered: z.union([z.string(), z.number()]).optional().transform((val) => val ? String(val) : undefined),
-});
-export const insertMaintenanceRecordSchema = createInsertSchema(maintenanceRecords).extend({
-  performedAt: z.string().transform((val) => new Date(val)),
-});
-export const selectMaintenanceRecordSchema = createSelectSchema(maintenanceRecords);
-export const insertAlertSchema = createInsertSchema(alerts).extend({
-  dueDate: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-});
-export const selectAlertSchema = createSelectSchema(alerts);
-export const insertFuelRecordSchema = createInsertSchema(fuelRecords).extend({
-  date: z.string().transform((val) => new Date(val)),
-});
-export const selectFuelRecordSchema = createSelectSchema(fuelRecords);
-export const insertTripRecordSchema = createInsertSchema(tripRecords).extend({
-  startDate: z.string().transform((val) => new Date(val)),
-  endDate: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-});
-export const selectTripRecordSchema = createSelectSchema(tripRecords);
-export const insertMileageTripSchema = createInsertSchema(mileageTrips).extend({
-  startTime: z.string().transform((val) => new Date(val)),
-  endTime: z.string().optional().nullable().transform((val) => {
-    if (!val || val === '') return null;
-    return new Date(val);
-  }),
-});
-export const selectMileageTripSchema = createSelectSchema(mileageTrips);
-export const insertExpenseRecordSchema = createInsertSchema(expenseRecords).extend({
-  date: z.string().transform((val) => new Date(val)),
-});
-export const selectExpenseRecordSchema = createSelectSchema(expenseRecords);
-export const insertVehicleSpecsSchema = createInsertSchema(vehicleSpecs);
-export const selectVehicleSpecsSchema = createSelectSchema(vehicleSpecs);
-export const insertDocumentSchema = createInsertSchema(documents).extend({
-  uploadDate: z.string().transform((val) => new Date(val)),
-});
-export const selectDocumentSchema = createSelectSchema(documents);
-export const insertMaintenanceAppointmentSchema = createInsertSchema(maintenanceAppointments).extend({
-  scheduledDate: z.string().transform((val) => new Date(val)),
-});
-export const selectMaintenanceAppointmentSchema = createSelectSchema(maintenanceAppointments);
-export const insertChargingStationReservationSchema = createInsertSchema(chargingStationReservations).extend({
-  reservationDate: z.string().transform((val) => new Date(val)),
-});
-export const selectChargingStationReservationSchema = createSelectSchema(chargingStationReservations);
-
-// Types
+// ---------- Tipos ----------
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vehicle = typeof vehicles.$inferSelect;
@@ -728,15 +388,10 @@ export type Alert = typeof alerts.$inferSelect;
 export type NewAlert = typeof alerts.$inferInsert;
 export type FuelRecord = typeof fuelRecords.$inferSelect;
 export type NewFuelRecord = typeof fuelRecords.$inferInsert;
-export type TripRecord = typeof tripRecords.$inferSelect;
-export type NewTripRecord = typeof tripRecords.$inferInsert;
 export type MileageTrip = typeof mileageTrips.$inferSelect;
 export type NewMileageTrip = typeof mileageTrips.$inferInsert;
-export type CreateMileageTrip = typeof createMileageTripSchema._output;
 export type ExpenseRecord = typeof expenseRecords.$inferSelect;
 export type NewExpenseRecord = typeof expenseRecords.$inferInsert;
-export type VehicleSpecs = typeof vehicleSpecs.$inferSelect;
-export type NewVehicleSpecs = typeof vehicleSpecs.$inferInsert;
 export type Document = typeof documents.$inferSelect;
 export type NewDocument = typeof documents.$inferInsert;
 export type MaintenanceAppointment = typeof maintenanceAppointments.$inferSelect;

@@ -1,593 +1,214 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { get, post, handleApiError } from "@/lib/apiUtils";
-import ReceiptOcrDialog from "@/components/ReceiptOcrDialog";
-import ExpenseListItem, { expenseCategories } from "@/components/ExpenseListItem";
-import { useVehicles } from "@/hooks/useVehicles";
-import { useToast } from "@/hooks/use-toast";
-
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Calendar, Download, Euro, FileText, Plus, Receipt, TrendingUp } from "lucide-react";
+import type { ExpenseRecord } from "@shared/schema";
+import { monthlyExpenses } from "@shared/calc";
 import Sidebar from "@/components/Sidebar";
+import ReceiptOcrDialog from "@/components/ReceiptOcrDialog";
+import ExpenseListItem from "@/components/ExpenseListItem";
+import ExpenseFormDialog from "@/components/ExpenseFormDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Receipt, Euro, TrendingUp, Calendar, Filter, Download, FileText, Upload } from "lucide-react";
-import type { Vehicle, ExpenseRecord } from "@shared/schema";
-import { z } from "zod";
+import { useVehicles } from "@/hooks/useVehicles";
+import { get } from "@/lib/apiUtils";
+import { EXPENSE_CATEGORIES, downloadExpensesCsv, expenseBreakdown, filterExpenses, type DateFilter } from "@/lib/expenses";
+import { formatDate, formatEuro, formatNumber, localDateInput } from "@/lib/utils";
 
-const expenseFormSchema = z.object({
-  vehicleId: z.string().min(1, "Veículo é obrigatório"),
-  type: z.string().optional(), // Will be set automatically from category
-  category: z.string().min(1, "Categoria é obrigatória"),
-  amount: z.coerce.number<number>().min(0.01, "Valor deve ser superior a 0"),
-  date: z.string().min(1, "Data é obrigatória"),
-  description: z.string().optional(),
-  receiptUrl: z.string().optional(),
-  vendor: z.string().optional(),
-  mileage: z.coerce.number<number>().min(0, "Quilometragem deve ser positiva").optional(),
-  isBusinessExpense: z.boolean().default(false),
-});
-
+function StatCard({ title, icon: Icon, value, hint }: { title: string; icon: typeof Euro; value: string; hint: string }) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold break-words">{value}</div>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function ExpenseManagement() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  
-  const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
-  
-  const [selectedVehicle, setSelectedVehicle] = useState<string>("");
-  const [dateFilter, setDateFilter] = useState<string>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
-
-  
-
-    const { data: vehicles = [] } = useVehicles();
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const { data: vehicles = [] } = useVehicles();
 
   const { data: expenses = [] } = useQuery<ExpenseRecord[]>({
     queryKey: ["/api/expenses", selectedVehicle],
-    queryFn: async () => {
-            if (!selectedVehicle) return [];
-      return get<ExpenseRecord[]>(`/api/expenses?vehicleId=${selectedVehicle}`);
-    },
+    queryFn: () => get<ExpenseRecord[]>(`/api/expenses?vehicleId=${encodeURIComponent(selectedVehicle)}`),
     enabled: !!selectedVehicle,
   });
 
-  const form = useForm({
-    resolver: zodResolver(expenseFormSchema),
-    defaultValues: {
-      vehicleId: "",
-      type: "",
-      date: new Date().toISOString().slice(0, 10),
-      category: "",
-      amount: 0,
-      description: "",
-      mileage: 0,
-      vendor: "",
-      receiptUrl: "",
-      isBusinessExpense: false,
-    },
-  });
+  const filtered = useMemo(() => filterExpenses(expenses, dateFilter, categoryFilter), [expenses, dateFilter, categoryFilter]);
+  const breakdown = useMemo(() => expenseBreakdown(filtered), [filtered]);
+  // Média real: total dos últimos 12 meses ÷ 12 (mesma fórmula do servidor)
+  const monthlyAverage = useMemo(() => monthlyExpenses(expenses), [expenses]);
+  const lastDate = filtered.length ? filtered.reduce((max, e) => (new Date(e.date) > new Date(max) ? e.date : max), filtered[0].date) : null;
+  const maxMonth = Math.max(...breakdown.months.map((m) => m.total), 1);
+  const vehicle = vehicles.find((v) => v.id === selectedVehicle);
 
-  const addExpenseMutation = useMutation({
-        mutationFn: (data: z.infer<typeof expenseFormSchema>) => post("/api/expenses", data),
-    onSuccess: () => {
-      // Invalidate all expense queries
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
-      toast({
-        title: "Despesa registada",
-        description: "A despesa foi registada com sucesso!",
-      });
-      form.reset();
-      setIsAddExpenseModalOpen(false);
-    },
-        onError: (error) => {
-      toast({
-        title: "Erro",
-        description: handleApiError(error, "Erro ao registar despesa. Tente novamente."),
-        variant: "destructive",
-      });
-    },
-  });
-
-  // Update form vehicleId when selectedVehicle changes
-  useEffect(() => {
-    if (selectedVehicle) {
-      form.setValue('vehicleId', selectedVehicle);
-    }
-  }, [selectedVehicle, form]);
-
-  const onSubmit = (data: z.infer<typeof expenseFormSchema>) => {
-    
-    const expenseData = {
-      ...data,
-      type: data.category
-    };
-    
-    addExpenseMutation.mutate(expenseData);
-  };
-
-  // Filter expenses
-  const filteredExpenses = expenses.filter((expense) => {
-    if (categoryFilter !== "all" && expense.category !== categoryFilter) return false;
-    
-    if (dateFilter !== "all") {
-      const expenseDate = new Date(expense.date);
-      const now = new Date();
-      
-      switch (dateFilter) {
-        case "thisMonth":
-          if (expenseDate.getMonth() !== now.getMonth() || 
-              expenseDate.getFullYear() !== now.getFullYear()) return false;
-          break;
-        case "thisYear":
-          if (expenseDate.getFullYear() !== now.getFullYear()) return false;
-          break;
-        case "lastMonth":
-          const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-          if (expenseDate.getMonth() !== lastMonth.getMonth() ||
-              expenseDate.getFullYear() !== lastMonth.getFullYear()) return false;
-          break;
-      }
-    }
-    
-    return true;
-  });
-
-  // Calculate statistics
-  const calculateStats = () => {
-    if (filteredExpenses.length === 0) return null;
-
-    const totalAmount = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
-    const categoryStats = Object.keys(expenseCategories).map(categoryKey => {
-      const categoryExpenses = filteredExpenses.filter(e => e.category === categoryKey);
-      const total = categoryExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-      return {
-        category: categoryKey,
-        total,
-        count: categoryExpenses.length,
-        percentage: totalAmount > 0 ? (total / totalAmount) * 100 : 0,
-      };
-    }).filter(stat => stat.count > 0).sort((a, b) => b.total - a.total);
-
-    const averagePerMonth = filteredExpenses.length > 0 ? 
-      totalAmount / Math.max(1, Math.ceil(filteredExpenses.length / 4)) : 0;
-
-    return {
-      totalAmount,
-      totalExpenses: filteredExpenses.length,
-      categoryStats,
-      averagePerMonth,
-    };
-  };
-
-  const stats = calculateStats();
-
-  
+  const exportCsv = () =>
+    downloadExpensesCsv(filtered, `despesas-${vehicle?.licensePlate ?? "veiculo"}-${localDateInput()}.csv`);
 
   return (
     <Sidebar>
       <div className="px-4 py-8 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-card rounded-lg">
-                <Receipt className="h-8 w-8 text-primary" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">Gestão de Despesas</h1>
-                <p className="text-muted-foreground">Registe e analise todas as despesas dos seus veículos</p>
-              </div>
+        <div className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-card rounded-lg">
+              <Receipt className="h-8 w-8 text-primary" aria-hidden="true" />
             </div>
-            <Dialog open={isAddExpenseModalOpen} onOpenChange={setIsAddExpenseModalOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-green-600 hover:bg-green-700 self-start sm:self-auto">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Nova Despesa
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>Registar Despesa</DialogTitle>
-                </DialogHeader>
-                <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit, (errors) => {
-                  })} className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="vehicleId"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Veículo</FormLabel>
-                            <Select onValueChange={field.onChange}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecionar veículo" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {vehicles.map((vehicle) => (
-                                  <SelectItem key={vehicle.id} value={vehicle.id}>
-                                    {vehicle.brand} {vehicle.model} - {vehicle.licensePlate}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Data</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="category"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Categoria</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Tipo de despesa" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="fuel">⛽ Combustível</SelectItem>
-                                <SelectItem value="maintenance">🔧 Manutenção</SelectItem>
-                                <SelectItem value="insurance">🛡️ Seguro</SelectItem>
-                                <SelectItem value="tax">📋 Imposto</SelectItem>
-                                <SelectItem value="toll">🛣️ Portagem</SelectItem>
-                                <SelectItem value="parking">🅿️ Estacionamento</SelectItem>
-                                <SelectItem value="other">📝 Outros</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="amount"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Valor (€)</FormLabel>
-                            <FormControl>
-                              <Input 
-                                type="number" 
-                                step="0.01"
-                                placeholder="0.00"
-                                {...field}
-                                onChange={(e) => field.onChange(Number(e.target.value) || 0)}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="vendor"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Fornecedor</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Local da despesa" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="mileage"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Quilometragem (opcional)</FormLabel>
-                            <FormControl>
-                              <Input 
-                                type="number"
-                                placeholder="123000"
-                                {...field}
-                                onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : undefined)}
-                                value={field.value || ""}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="receiptUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>URL do Recibo (opcional)</FormLabel>
-                            <FormControl>
-                              <Input placeholder="https://..." {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name="description"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Descrição</FormLabel>
-                          <FormControl>
-                            <Textarea placeholder="Descrição da despesa" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="flex justify-end space-x-4">
-                      <Button type="button" variant="outline" onClick={() => setIsAddExpenseModalOpen(false)}>
-                        Cancelar
-                      </Button>
-                      <Button type="submit" disabled={addExpenseMutation.isPending}>
-                        {addExpenseMutation.isPending ? "A guardar..." : "Guardar"}
-                      </Button>
-                    </div>
-                  </form>
-                </Form>
-              </DialogContent>
-            </Dialog>
-
+            <div>
+              <h1 className="text-2xl font-bold">Gestão de Despesas</h1>
+              <p className="text-muted-foreground">Registe e analise as despesas dos seus veículos</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => setIsAddOpen(true)} disabled={vehicles.length === 0}>
+              <Plus className="h-4 w-4 mr-2" aria-hidden="true" /> Nova Despesa
+            </Button>
             <ReceiptOcrDialog vehicles={vehicles} selectedVehicle={selectedVehicle} onSelectVehicle={setSelectedVehicle} />
           </div>
         </div>
 
-        {/* Vehicle and Filters */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <div>
-            <Label htmlFor="vehicle-select" className="text-base font-medium">
-              Veículo
-            </Label>
+            <Label htmlFor="expense-vehicle" className="text-base font-medium">Veículo</Label>
             <Select value={selectedVehicle} onValueChange={setSelectedVehicle}>
-              <SelectTrigger className="mt-2">
-                <SelectValue placeholder="Escolher veículo" />
-              </SelectTrigger>
+              <SelectTrigger id="expense-vehicle" className="mt-2"><SelectValue placeholder="Escolher veículo" /></SelectTrigger>
               <SelectContent>
-                {vehicles.map((vehicle) => (
-                  <SelectItem key={vehicle.id} value={vehicle.id}>
-                    {vehicle.brand} {vehicle.model} - {vehicle.licensePlate}
-                  </SelectItem>
-                ))}
+                {vehicles.map((v) => <SelectItem key={v.id} value={v.id}>{v.brand} {v.model} — {v.licensePlate}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-
           <div>
-            <Label className="text-base font-medium">Período</Label>
-            <Select value={dateFilter} onValueChange={setDateFilter}>
-              <SelectTrigger className="mt-2">
-                <SelectValue />
-              </SelectTrigger>
+            <Label htmlFor="expense-period" className="text-base font-medium">Período</Label>
+            <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as DateFilter)}>
+              <SelectTrigger id="expense-period" className="mt-2"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="thisMonth">Este Mês</SelectItem>
-                <SelectItem value="lastMonth">Mês Passado</SelectItem>
-                <SelectItem value="thisYear">Este Ano</SelectItem>
+                <SelectItem value="thisMonth">Este mês</SelectItem>
+                <SelectItem value="lastMonth">Mês passado</SelectItem>
+                <SelectItem value="thisYear">Este ano</SelectItem>
               </SelectContent>
             </Select>
           </div>
-
           <div>
-            <Label className="text-base font-medium">Categoria</Label>
+            <Label htmlFor="expense-category" className="text-base font-medium">Categoria</Label>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="mt-2">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger id="expense-category" className="mt-2"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas</SelectItem>
-                <SelectItem value="fuel">⛽ Combustível</SelectItem>
-                <SelectItem value="maintenance">🔧 Manutenção</SelectItem>
-                <SelectItem value="insurance">🛡️ Seguro</SelectItem>
-                <SelectItem value="tax">📋 Imposto</SelectItem>
-                <SelectItem value="toll">🛣️ Portagem</SelectItem>
-                <SelectItem value="parking">🅿️ Estacionamento</SelectItem>
-                <SelectItem value="other">📝 Outros</SelectItem>
+                {Object.entries(EXPENSE_CATEGORIES).map(([key, c]) => <SelectItem key={key} value={key}>{c.icon} {c.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-
           <div className="flex items-end">
-            <Button variant="outline" className="w-full">
-              <Download className="h-4 w-4 mr-2" />
-              Exportar
+            <Button variant="outline" className="w-full" onClick={exportCsv} disabled={filtered.length === 0}>
+              <Download className="h-4 w-4 mr-2" aria-hidden="true" /> Exportar CSV
             </Button>
           </div>
         </div>
 
         {selectedVehicle && (
           <Tabs defaultValue="overview" className="space-y-6">
-            <TabsList>
-              <TabsTrigger value="overview">Resumo</TabsTrigger>
-              <TabsTrigger value="expenses">Despesas</TabsTrigger>
-              <TabsTrigger value="analytics">Análise</TabsTrigger>
+            <TabsList className="w-full sm:w-auto justify-start overflow-x-auto">
+              <TabsTrigger value="overview" className="shrink-0">Resumo</TabsTrigger>
+              <TabsTrigger value="expenses" className="shrink-0">Despesas</TabsTrigger>
+              <TabsTrigger value="analytics" className="shrink-0">Análise</TabsTrigger>
             </TabsList>
 
-            {/* Overview Tab */}
             <TabsContent value="overview">
-              {stats ? (
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total Gasto</CardTitle>
-                        <Euro className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">€{stats.totalAmount.toFixed(2)}</div>
-                        <p className="text-xs text-muted-foreground">
-                          {stats.totalExpenses} despesas
-                        </p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Média Mensal</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">€{stats.averagePerMonth.toFixed(2)}</div>
-                        <p className="text-xs text-muted-foreground">estimativa</p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Categoria Principal</CardTitle>
-                        <Receipt className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">
-                          {stats.categoryStats[0] ? 
-                            expenseCategories[stats.categoryStats[0].category as keyof typeof expenseCategories]?.label || stats.categoryStats[0].category : 
-                            "N/A"
-                          }
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {stats.categoryStats[0] ? `€${stats.categoryStats[0].total.toFixed(2)}` : ""}
-                        </p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Última Despesa</CardTitle>
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">
-                          {filteredExpenses.length > 0 ? 
-                            new Date(Math.max(...filteredExpenses.map(e => new Date(e.date).getTime()))).toLocaleDateString('pt-PT') : 
-                            "N/A"
-                          }
-                        </div>
-                        <p className="text-xs text-muted-foreground">data da última</p>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {/* Category Breakdown */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Distribuição por Categoria</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {stats.categoryStats.map((stat) => {
-                          const categoryInfo = expenseCategories[stat.category as keyof typeof expenseCategories];
-                          const categoryName = categoryInfo?.label || stat.category;
-                          const categoryIcon = categoryInfo?.icon || "📝";
-                          
-                          return (
-                            <div key={stat.category} className="flex items-center justify-between">
-                              <div className="flex items-center space-x-3">
-                                <span className="text-lg">{categoryIcon}</span>
-                                <span className="font-medium">{categoryName}</span>
-                                <Badge variant="secondary">{stat.count}</Badge>
-                              </div>
-                              <div className="text-right">
-                                <div className="font-bold">€{stat.total.toFixed(2)}</div>
-                                <div className="text-sm text-gray-500">
-                                  {stat.percentage.toFixed(1)}%
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
+              {filtered.length ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <StatCard title="Total Gasto" icon={Euro} value={formatEuro(breakdown.total)} hint={`${filtered.length} despesas`} />
+                  <StatCard title="Média Mensal" icon={TrendingUp} value={formatEuro(monthlyAverage)} hint="últimos 12 meses" />
+                  <StatCard title="Categoria Principal" icon={Receipt} value={breakdown.categories[0]?.label ?? "—"} hint={breakdown.categories[0] ? formatEuro(breakdown.categories[0].total) : ""} />
+                  <StatCard title="Última Despesa" icon={Calendar} value={formatDate(lastDate, "—")} hint="data da última" />
                 </div>
               ) : (
                 <Card>
                   <CardContent className="text-center py-12">
-                    <Receipt className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-                    <p className="text-lg font-medium text-foreground mb-2">
-                      Nenhuma despesa encontrada
-                    </p>
-                    <p className="text-muted-foreground">
-                      Registe a sua primeira despesa para ver estatísticas
-                    </p>
+                    <Receipt className="h-16 w-16 mx-auto text-muted-foreground mb-4" aria-hidden="true" />
+                    <p className="text-lg font-medium mb-2">Nenhuma despesa encontrada</p>
+                    <p className="text-muted-foreground">Registe uma despesa ou altere os filtros</p>
                   </CardContent>
                 </Card>
               )}
             </TabsContent>
 
-            {/* Expenses Tab */}
             <TabsContent value="expenses">
               <Card>
-                <CardHeader>
-                  <CardTitle>Lista de Despesas</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle>Lista de Despesas</CardTitle></CardHeader>
                 <CardContent>
-                  {filteredExpenses.length === 0 ? (
-                    <div className="text-center py-8">
-                      <FileText className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-                      <p className="text-gray-600">Nenhuma despesa encontrada</p>
+                  {filtered.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <FileText className="h-16 w-16 mx-auto mb-4 opacity-50" aria-hidden="true" />
+                      <p>Nenhuma despesa encontrada</p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {filteredExpenses.map((expense) => (
-                        <ExpenseListItem key={expense.id} expense={expense} />
-                      ))}
-                    </div>
+                    <div className="space-y-4">{filtered.map((e) => <ExpenseListItem key={e.id} expense={e} />)}</div>
                   )}
                 </CardContent>
               </Card>
             </TabsContent>
 
-            {/* Analytics Tab */}
-            <TabsContent value="analytics">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Análise de Gastos</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-center py-8">
-                    <TrendingUp className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-                    <p className="text-gray-600">Gráficos e tendências em desenvolvimento</p>
-                  </div>
-                </CardContent>
-              </Card>
+            <TabsContent value="analytics" className="space-y-6">
+              {filtered.length === 0 ? (
+                <p className="text-center py-8 text-muted-foreground">Sem despesas para analisar no período escolhido.</p>
+              ) : (
+                <>
+                  <Card>
+                    <CardHeader><CardTitle>Por Categoria</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                      {breakdown.categories.map((c) => (
+                        <div key={c.key} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-2 font-medium">
+                              <span aria-hidden="true">{c.icon}</span> {c.label} <Badge variant="secondary">{c.count}</Badge>
+                            </span>
+                            <span className="text-right text-sm">
+                              <span className="font-bold">{formatEuro(c.total)}</span>
+                              <span className="text-muted-foreground ml-2">{formatNumber(c.percentage, 1)}%</span>
+                            </span>
+                          </div>
+                          <div className="h-2 w-full rounded-full bg-muted">
+                            <div className="h-2 rounded-full bg-primary" style={{ width: `${c.percentage}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader><CardTitle>Por Mês</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      {breakdown.months.map((m) => (
+                        <div key={m.month} className="space-y-1">
+                          <div className="flex justify-between text-sm">
+                            <span className="capitalize">{new Date(`${m.month}-01T00:00:00`).toLocaleDateString("pt-PT", { month: "long", year: "numeric" })}</span>
+                            <span className="font-medium">{formatEuro(m.total)}</span>
+                          </div>
+                          <div className="h-2 w-full rounded-full bg-muted">
+                            <div className="h-2 rounded-full bg-gradient-to-r from-green-500 to-blue-500" style={{ width: `${(m.total / maxMonth) * 100}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </>
+              )}
             </TabsContent>
           </Tabs>
         )}
+
+        <ExpenseFormDialog open={isAddOpen} onOpenChange={setIsAddOpen} vehicles={vehicles} defaultVehicleId={selectedVehicle} />
       </div>
     </Sidebar>
   );

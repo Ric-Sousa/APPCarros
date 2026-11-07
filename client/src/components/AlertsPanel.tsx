@@ -21,7 +21,7 @@ export default function AlertsPanel({ alerts }: AlertsPanelProps) {
             <div>
               <h3 className="font-semibold text-foreground">Alertas Importantes</h3>
               <p className="text-sm text-muted-foreground">
-                {alerts.length} {alerts.length === 1 ? 'veículo requer' : 'veículos requerem'} atenção imediata
+                {alerts.length} {alerts.length === 1 ? 'prazo requer' : 'prazos requerem'} atenção imediata
               </p>
             </div>
           </div>

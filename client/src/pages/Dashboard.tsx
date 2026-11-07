@@ -14,15 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useVehicles } from "@/hooks/useVehicles";
 import type { Vehicle, Alert } from "@shared/schema";
+import { daysUntil, formatNumber } from "@/lib/utils";
 
-/** Days until the nearest future inspection/IUC/insurance date across all vehicles. */
+/** Dias até ao próximo prazo (inspeção/IUC/seguro) de todos os veículos. */
 function daysToNextDeadline(vehicles: Vehicle[]): number | null {
-  const now = Date.now();
   const days = vehicles
     .flatMap((v) => [v.inspectionDue, v.iucDue, v.insuranceDue])
-    .filter(Boolean)
-    .map((d) => Math.ceil((new Date(d as any).getTime() - now) / 86_400_000))
-    .filter((d) => d >= 0);
+    .map((d) => daysUntil(d))
+    .filter((d): d is number => d !== null && d >= 0);
   return days.length ? Math.min(...days) : null;
 }
 
@@ -82,7 +81,7 @@ export default function Dashboard() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
           <StatsCard
             title="Total Veículos"
             value={stats?.totalVehicles?.toString() || "0"}
@@ -101,7 +100,7 @@ export default function Dashboard() {
           />
           <StatsCard
             title="Próxima Manutenção"
-            value={nextDeadlineDays !== null ? `${nextDeadlineDays} dias` : "N/A"}
+            value={nextDeadlineDays !== null ? (nextDeadlineDays === 0 ? "Hoje" : `${nextDeadlineDays} ${nextDeadlineDays === 1 ? "dia" : "dias"}`) : "—"}
             icon={Wrench}
             iconColor="text-primary"
             bgColor="bg-card"
@@ -109,7 +108,7 @@ export default function Dashboard() {
           />
           <StatsCard
             title="KMs este Mês"
-            value={stats?.monthlyKms?.toLocaleString() || "0"}
+            value={formatNumber(stats?.monthlyKms ?? 0)}
             icon={Gauge}
             iconColor="text-primary"
             bgColor="bg-card"
@@ -120,7 +119,7 @@ export default function Dashboard() {
         {/* Alerts Section */}
         <div className="space-y-6 mb-8">
           {urgentAlerts.length > 0 && <AlertsPanel alerts={urgentAlerts} />}
-          <FuelAlerts showAll={false} />
+          <FuelAlerts />
         </div>
 
         {/* Main Content - Vehicles Section */}

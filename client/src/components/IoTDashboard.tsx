@@ -58,7 +58,9 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
   const { data: fetchedDevices = [] } = useQuery<IoTDevice[]>({ queryKey: devicesKey });
   const { data: fetchedSensors = [] } = useQuery<SensorData[]>({
     queryKey: ['/api/vehicles', vehicleId, 'sensor-data'],
-    refetchInterval: autoRefresh ? 5000 : false,
+    // Os dados de demonstração não mudam: atualiza só a cada minuto/ao voltar à janela; os reais chegam por Socket.IO
+    refetchInterval: autoRefresh ? 60_000 : false,
+    refetchOnWindowFocus: autoRefresh,
   });
 
   // Realtime device updates ({ vehicleId, device, data }) override fetched devices by id
@@ -127,10 +129,10 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'good': return 'text-green-600 bg-green-100';
-      case 'warning': return 'text-yellow-600 bg-yellow-100';
-      case 'critical': return 'text-red-600 bg-red-100';
-      default: return 'text-gray-600 bg-gray-100';
+      case 'good': return 'text-green-700 bg-green-100 dark:text-green-400 dark:bg-green-900/30';
+      case 'warning': return 'text-yellow-700 bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-900/30';
+      case 'critical': return 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-900/30';
+      default: return 'text-muted-foreground bg-muted';
     }
   };
 
@@ -159,13 +161,13 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
       {/* Header with controls */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2">
-              <Wifi className="h-5 w-5 text-blue-600" />
+              <Wifi className="h-5 w-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
                             Dispositivos IoT e Sensores
               {isDemo && <Badge variant="outline">Dados de demonstração</Badge>}
             </CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                                 onClick={() => setAutoRefresh(!autoRefresh)}
                 variant={autoRefresh ? "default" : "outline"}
@@ -173,7 +175,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
                 aria-pressed={autoRefresh}
                 title="Atualização automática"
               >
-                <RefreshCw className={`h-4 w-4 ${autoRefresh ? 'animate-spin' : ''}`} />
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 Auto
               </Button>
               <Button 
@@ -196,7 +198,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
         </CardHeader>
         <CardContent>
           {devices.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-muted-foreground">
               <WifiOff className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Nenhum dispositivo IoT ligado</p>
               <p className="text-sm">Use o botão "Pesquisar" para encontrar dispositivos</p>
@@ -212,7 +214,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
                     </Badge>
                   </div>
                   
-                  <div className="space-y-2 text-sm text-gray-600">
+                  <div className="space-y-2 text-sm text-muted-foreground">
                     <div className="flex justify-between">
                       <span>Sinal:</span>
                       <span>{device.signalStrength}%</span>
@@ -225,7 +227,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
                     )}
                     <div className="flex justify-between">
                       <span>Última atividade:</span>
-                      <span>{new Date(device.lastSeen).toLocaleTimeString()}</span>
+                      <span>{new Date(device.lastSeen).toLocaleTimeString('pt-PT')}</span>
                     </div>
                   </div>
 
@@ -244,7 +246,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
         </CardHeader>
         <CardContent>
           {sensorData.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-muted-foreground">
               <Gauge className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Nenhum dado de sensor disponível</p>
               <p className="text-sm">Ligue dispositivos IoT para ver dados em tempo real</p>
@@ -269,8 +271,8 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
                       {sensor.value} {sensor.unit}
                     </div>
                     
-                    <div className="text-xs text-gray-500">
-                      Atualizado: {new Date(sensor.lastUpdate).toLocaleTimeString()}
+                    <div className="text-xs text-muted-foreground">
+                      Atualizado: {new Date(sensor.lastUpdate).toLocaleTimeString('pt-PT')}
                     </div>
                     
                     {sensor.status !== 'good' && (
@@ -300,7 +302,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
         <CardContent className="space-y-4">
           <div>
             <h4 className="font-medium mb-2">OBD-II Adapter</h4>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               1. Ligue o adaptador OBD-II à porta do seu veículo<br />
               2. Ative o Bluetooth no seu telemóvel<br />
               3. Use o botão "Pesquisar" para encontrar o dispositivo
@@ -309,7 +311,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
           
           <div>
             <h4 className="font-medium mb-2">Sensores de Pressão dos Pneus</h4>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               1. Instale os sensores nas válvulas dos pneus<br />
               2. Calibre os pneus para inicializar os sensores<br />
               3. Os dados aparecerão automaticamente após a calibração
@@ -318,7 +320,7 @@ const IoTDashboard: React.FC<IoTDashboardProps> = ({ vehicleId }) => {
           
           <div>
             <h4 className="font-medium mb-2">Monitor de Bateria</h4>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               1. Ligue o monitor aos terminais da bateria<br />
               2. Configure a capacidade da bateria na app<br />
               3. Monitorize a saúde da bateria em tempo real

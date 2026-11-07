@@ -180,11 +180,19 @@ export async function trackUnsplashUse(trackUrl: string) {
   }
 }
 
-/** Foto automática ao criar um veículo sem foto: a melhor sugestão. */
-export async function getVehicleImage(v: VehicleInfo): Promise<VehicleImage | null> {
-  const commons = await safely(() => commonsSuggestions(v, 1));
-  const best = commons[0] ?? (await safely(() => unsplashSuggestions(v, 1)))[0];
-  if (!best) return null;
-  if (best.trackUrl) await trackUnsplashUse(best.trackUrl);
-  return { url: best.url, credit: best.credit, creditUrl: best.creditUrl };
+/**
+ * Foto automática ao criar um veículo sem foto: a melhor sugestão.
+ * No máximo 8 s, para não atrasar a criação; sem resultado a tempo, o veículo fica sem foto
+ * (o utilizador pode escolher uma depois em "Mudar foto").
+ */
+export async function getVehicleImage(v: VehicleInfo, budgetMs = 8000): Promise<VehicleImage | null> {
+  const search = (async () => {
+    const commons = await safely(() => commonsSuggestions(v, 1));
+    const best = commons[0] ?? (await safely(() => unsplashSuggestions(v, 1)))[0];
+    if (!best) return null;
+    if (best.trackUrl) await trackUnsplashUse(best.trackUrl);
+    return { url: best.url, credit: best.credit, creditUrl: best.creditUrl };
+  })();
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), budgetMs).unref());
+  return Promise.race([search, timeout]);
 }

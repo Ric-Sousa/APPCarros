@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { apiRequest } from '@/lib/queryClient';
+import { useQuery } from '@tanstack/react-query';
+import { get, post } from '@/lib/apiUtils';
 
 export interface AutocompleteResult {
   value: string;
@@ -31,120 +32,41 @@ export interface OilIntervalInfo {
   description: string;
 }
 
-// Hook para autocomplete
-export const useAutocomplete = (query: string, type: 'oil' | 'tire' | 'both', minLength: number = 2) => {
-  const [suggestions, setSuggestions] = useState<AutocompleteResult[]>([]);
-  const [loading, setLoading] = useState(false);
-
+/** Value that only changes after `delay` ms without changes (for typing). */
+export function useDebounced<T>(value: T, delay = 400): T {
+  const [debounced, setDebounced] = useState(value);
   useEffect(() => {
-    if (query.length < minLength) {
-      setSuggestions([]);
-      return;
-    }
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
 
-    const fetchSuggestions = async () => {
-      setLoading(true);
-      try {
-        const response = await apiRequest('GET', `/api/autocomplete/${type}?q=${encodeURIComponent(query)}`);
-        const data = await response.json();
-        setSuggestions(data);
-      } catch (error) {
-        console.error('Error fetching autocomplete:', error);
-        setSuggestions([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+/** Sugestões de marcas de óleo/pneus enquanto o utilizador escreve. */
+export function useAutocomplete(query: string, type: 'oil' | 'tire' | 'both', minLength = 2) {
+  const q = useDebounced(query.trim(), 300);
+  const { data, isFetching } = useQuery<AutocompleteResult[]>({
+    queryKey: ['/api/autocomplete', type, q],
+    queryFn: () => get<AutocompleteResult[]>(`/api/autocomplete/${type}?q=${encodeURIComponent(q)}`),
+    enabled: q.length >= minLength,
+  });
+  return { suggestions: q.length >= minLength ? data ?? [] : [], loading: isFetching };
+}
 
-    const timeoutId = setTimeout(fetchSuggestions, 300); // Debounce
-    return () => clearTimeout(timeoutId);
-  }, [query, type, minLength]);
+/** Recomendações de óleo e pneus para marca/modelo (/api/vehicle-specs). */
+export function useVehicleSpecs(brand: string, model: string) {
+  return useQuery<VehicleRecommendations>({
+    queryKey: ['/api/vehicle-specs', brand, model],
+    queryFn: () => get<VehicleRecommendations>(`/api/vehicle-specs/${encodeURIComponent(brand)}/${encodeURIComponent(model)}`),
+    enabled: !!brand && !!model,
+  });
+}
 
-  return { suggestions, loading };
-};
-
-// Hook para recomendações de veículo
-export const useVehicleRecommendations = (brand: string, model: string) => {
-  const [recommendations, setRecommendations] = useState<VehicleRecommendations | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!brand || !model) {
-      setRecommendations(null);
-      setError(null);
-      return;
-    }
-
-    const fetchRecommendations = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await apiRequest('GET', `/api/vehicle-specs/${encodeURIComponent(brand)}/${encodeURIComponent(model)}`);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        setRecommendations(data);
-      } catch (error) {
-        console.error('❌ Error fetching vehicle recommendations:', error);
-        setError(error instanceof Error ? error.message : 'Erro desconhecido');
-        
-        // Fallback para recomendações genéricas
-        setRecommendations({
-          found: false,
-          oilRecommendations: {
-            recommendedType: "5W-30 ou 10W-40",
-            recommendedBrands: ["Castrol", "Mobil 1", "Shell", "Total"],
-            capacity: "Consulte manual",
-            intervalKm: 10000,
-            intervalMonths: 12,
-            description: "Recomendações genéricas. Consulte o manual do proprietário para especificações exatas."
-          },
-          tireRecommendations: {
-            recommendedSize: "Consulte manual",
-            recommendedBrands: ["Michelin", "Continental", "Bridgestone", "Pirelli"],
-            intervalKm: 50000,
-            description: "Recomendações genéricas. Verifique a medida no pneu atual ou manual do veículo."
-          }
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchRecommendations();
-  }, [brand, model]);
-
-  return { recommendations, loading, error };
-};
-
-// Hook para informações de intervalo de óleo
-export const useOilInterval = () => {
-  const [intervalInfo, setIntervalInfo] = useState<OilIntervalInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const fetchOilInterval = async (oilBrand: string, vehicleBrand: string, vehicleModel: string) => {
-    setLoading(true);
-    try {
-      const response = await apiRequest('POST', '/api/oil-interval', {
-        oilBrand,
-        vehicleBrand,
-        vehicleModel
-      });
-      const data = await response.json();
-      setIntervalInfo(data);
-      return data;
-    } catch (error) {
-      console.error('Error fetching oil interval:', error);
-      setIntervalInfo(null);
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return { intervalInfo, loading, fetchOilInterval };
-};
+/** Intervalo de mudança de óleo para uma marca de óleo (null se falhar). */
+export async function fetchOilInterval(oilBrand: string, vehicleBrand: string, vehicleModel: string): Promise<OilIntervalInfo | null> {
+  try {
+    return await post<OilIntervalInfo>('/api/oil-interval', { oilBrand, vehicleBrand, vehicleModel });
+  } catch {
+    return null;
+  }
+}

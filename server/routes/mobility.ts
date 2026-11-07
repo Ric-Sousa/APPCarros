@@ -1,37 +1,39 @@
 import type { Express } from 'express';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import { createChargingStationReservationSchema } from '@shared/schema';
+import { createChargingStationReservationSchema, updateChargingStationReservationSchema } from '@shared/schema';
 import { storage } from '../storage';
-import { requireAuth, requireVehicle, ownedVehicle, userId, HttpError } from '../http';
+import { requireAuth, requireVehicle, ownedVehicle, userId, HttpError, limiter } from '../http';
 import { consumptionL100 } from '../stats';
 import * as external from '../services/externalApis';
 
-const updateReservationSchema = createChargingStationReservationSchema.omit({ vehicleId: true, userId: true }).partial();
+const zLat = z.coerce.number().min(-90, 'Latitude inválida').max(90, 'Latitude inválida');
+const zLon = z.coerce.number().min(-180, 'Longitude inválida').max(180, 'Longitude inválida');
 
-const coord = z.coerce.number().refine(Number.isFinite, 'Coordenada inválida');
+// Rotas que chamam serviços externos (ORS, Overpass, OpenChargeMap, Nominatim): limitar
+const externalLimiter = limiter(60, 'pesquisas', 15 * 60 * 1000);
 // Campos numéricos opcionais: null, '' e NaN (parseFloat de campo vazio) contam como ausentes
 const optionalNumber = <T extends z.ZodType<number>>(schema: T) =>
   z.preprocess((v) => (v === null || v === '' || Number.isNaN(v) ? undefined : v), schema.optional());
 
 const routePlannerSchema = z.object({
-  originLat: coord,
-  originLon: coord,
-  destinationLat: coord,
-  destinationLon: coord,
+  originLat: zLat,
+  originLon: zLon,
+  destinationLat: zLat,
+  destinationLon: zLon,
   vehicleId: z.string().min(1),
   energyType: z.enum(['gasoline', 'diesel', 'electric']),
-  consumption: z.coerce.number().positive(),
-  capacity: optionalNumber(z.coerce.number().nonnegative()),
+  consumption: z.coerce.number().positive().max(100),
+  capacity: optionalNumber(z.coerce.number().nonnegative().max(1000)),
   currentLevelPercent: optionalNumber(z.coerce.number().min(0).max(100)),
 });
 
 const routePlanSchema = z.object({
   vehicleId: z.string().min(1),
-  originLat: coord,
-  originLon: coord,
-  destinationLat: coord,
-  destinationLon: coord,
+  originLat: zLat,
+  originLon: zLon,
+  destinationLat: zLat,
+  destinationLon: zLon,
 }).loose();
 
 // Campos que nunca podem ser alterados num plano guardado
@@ -46,13 +48,10 @@ const ocmKey = () => process.env.OPENCHARGEMMAP_API_KEY;
 
 export function registerMobilityRoutes(app: Express) {
   // ---------- Postos de carregamento ----------
-  app.get('/api/charging-stations', requireAuth, async (req, res) => {
-    const lat = Number(req.query.lat);
-    const lng = Number(req.query.lng);
-    const radius = Math.min(100, Math.max(1, Number(req.query.radius) || 10));
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ message: 'Latitude e longitude são obrigatórias' });
-    }
+  app.get('/api/charging-stations', requireAuth, externalLimiter, async (req, res) => {
+    const { lat, lng, radius } = z.object({
+      lat: zLat, lng: zLon, radius: z.coerce.number().min(1).max(100).default(10),
+    }).parse(req.query);
     const key = ocmKey();
     if (!key) return res.status(503).json({ message: 'Chave da API OpenChargeMap não configurada' });
 
@@ -103,8 +102,12 @@ export function registerMobilityRoutes(app: Express) {
     res.status(201).json(await storage.createChargingStationReservation(data));
   });
 
+  app.get('/api/reservations', requireAuth, async (req, res) => {
+    res.json(await storage.getUserReservations(userId(req)));
+  });
+
   app.put('/api/reservations/:id', requireAuth, async (req, res) => {
-    const updated = await storage.updateChargingStationReservation(req.params.id, userId(req), updateReservationSchema.parse(req.body));
+    const updated = await storage.updateChargingStationReservation(req.params.id, userId(req), updateChargingStationReservationSchema.parse(req.body));
     if (!updated) throw new HttpError(404, 'Reserva não encontrada');
     res.json(updated);
   });
@@ -159,7 +162,7 @@ export function registerMobilityRoutes(app: Express) {
   });
 
   // ---------- Planeador de rotas ----------
-  app.post('/api/route-planner', requireAuth, async (req, res) => {
+  app.post('/api/route-planner', requireAuth, externalLimiter, async (req, res) => {
     const input = routePlannerSchema.parse(req.body);
     await ownedVehicle(req, input.vehicleId);
 
@@ -246,9 +249,9 @@ export function registerMobilityRoutes(app: Express) {
     });
   });
 
-  app.get('/api/geocode', requireAuth, async (req, res) => {
-    const q = String(req.query.q ?? '').trim();
-    if (!q) return res.status(400).json({ message: 'Parâmetro q (endereço) é obrigatório' });
+  app.get('/api/geocode', requireAuth, externalLimiter, async (req, res) => {
+    const q = String(req.query.q ?? '').trim().slice(0, 200);
+    if (!q) throw new HttpError(400, 'Parâmetro q (endereço) é obrigatório');
     res.json({ results: await external.geocodeText(q) });
   });
 
@@ -278,36 +281,6 @@ export function registerMobilityRoutes(app: Express) {
   // ---------- Recomendações ----------
   const location = (q: unknown) => (typeof q === 'string' && q.trim() ? q.trim() : process.env.DEFAULT_LOCATION || 'Lisboa');
 
-  app.get('/api/external/fuel-prices', requireAuth, (_req, res) => {
-    const { data, demo } = external.getFuelPrices();
-    res.json({ success: true, demo, data, message: 'Preços de combustível de referência' });
-  });
-
-  app.get('/api/external/weather-impact', requireAuth, async (req, res) => {
-    const where = location(req.query.location);
-    const { data, demo } = await external.getWeatherImpact(where);
-    res.json({ success: true, demo, data, message: `Impacto meteorológico para ${where}` });
-  });
-
-  app.get('/api/external/traffic-optimization', requireAuth, async (req, res) => {
-    const { origin, destination } = req.query;
-    if (typeof origin !== 'string' || typeof destination !== 'string' || !origin || !destination) {
-      return res.status(400).json({ success: false, message: 'Origem e destino são obrigatórios' });
-    }
-    const { data, demo } = await external.getTrafficOptimization(origin, destination);
-    res.json({ success: true, demo, data, message: `Rota: ${origin} → ${destination}` });
-  });
-
-  app.get('/api/external/maintenance-prices/:brand/:model', requireAuth, (req, res) => {
-    const { data, demo } = external.getMaintenancePrices();
-    res.json({ success: true, demo, data, message: `Preços de manutenção de referência para ${req.params.brand} ${req.params.model}` });
-  });
-
-  app.get('/api/external/ai-recommendations/:vehicleId', requireAuth, requireVehicle, (req, res) => {
-    const v = req.vehicle!;
-    res.json({ success: true, demo: false, data: external.getRecommendations(v), message: `Recomendações para ${v.brand} ${v.model}` });
-  });
-
   app.get('/api/external/enhanced-recommendations/:vehicleId', requireAuth, requireVehicle, async (req, res) => {
     const v = req.vehicle!;
     const { data, demo } = await external.getEnhancedRecommendations(v, location(req.query.location));
@@ -319,19 +292,20 @@ export function registerMobilityRoutes(app: Express) {
   app.get('/api/vehicles/:vehicleId/iot-devices', requireAuth, requireVehicle, (_req, res) => {
     const now = new Date().toISOString();
     res.json([
-      { id: '1', name: 'Sistema de Diagnóstico OBD-II', type: 'diagnostic', status: 'connected', lastUpdate: now, batteryLevel: 85, demo: true },
-      { id: '2', name: 'Monitor de Pressão dos Pneus', type: 'tire_pressure', status: 'connected', lastUpdate: now, batteryLevel: 92, demo: true },
-      { id: '3', name: 'Sensor de Temperatura do Motor', type: 'temperature', status: 'connected', lastUpdate: now, batteryLevel: 78, demo: true },
+      { id: '1', name: 'Adaptador OBD-II', type: 'obd2_adapter', connected: true, batteryLevel: 85, signalStrength: 90, lastSeen: now, demo: true },
+      { id: '2', name: 'Sensores de pressão dos pneus', type: 'tire_sensor', connected: true, batteryLevel: 92, signalStrength: 75, lastSeen: now, demo: true },
+      { id: '3', name: 'Monitor da bateria', type: 'battery_monitor', connected: true, batteryLevel: 78, signalStrength: 80, lastSeen: now, demo: true },
     ]);
   });
 
   app.get('/api/vehicles/:vehicleId/sensor-data', requireAuth, requireVehicle, (_req, res) => {
     const now = new Date().toISOString();
     res.json([
-      { id: '1', deviceId: '1', type: 'engine_temperature', value: 85, unit: '°C', timestamp: now, status: 'normal', demo: true },
-      { id: '2', deviceId: '2', type: 'tire_pressure_fl', value: 32, unit: 'PSI', timestamp: now, status: 'normal', demo: true },
-      { id: '3', deviceId: '2', type: 'tire_pressure_fr', value: 31, unit: 'PSI', timestamp: now, status: 'warning', demo: true },
-      { id: '4', deviceId: '3', type: 'coolant_temperature', value: 90, unit: '°C', timestamp: now, status: 'normal', demo: true },
+      { id: '1', type: 'temperature', name: 'Temperatura do motor', value: 85, unit: '°C', status: 'good', lastUpdate: now, connected: true, demo: true },
+      { id: '2', type: 'tire_pressure', name: 'Pneu dianteiro esquerdo', value: 2.3, unit: 'bar', status: 'good', lastUpdate: now, connected: true, demo: true },
+      { id: '3', type: 'tire_pressure', name: 'Pneu dianteiro direito', value: 2.0, unit: 'bar', status: 'warning', lastUpdate: now, connected: true, demo: true },
+      { id: '4', type: 'battery', name: 'Bateria', value: 12.6, unit: 'V', status: 'good', lastUpdate: now, connected: true, demo: true },
+      { id: '5', type: 'fuel_level', name: 'Nível de combustível', value: 45, unit: '%', status: 'good', lastUpdate: now, connected: true, demo: true },
     ]);
   });
 

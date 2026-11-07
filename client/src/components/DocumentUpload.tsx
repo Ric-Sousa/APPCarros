@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Upload, FileText, AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
-import { post } from '@/lib/apiUtils';
+import { post, handleApiError } from '@/lib/apiUtils';
+import { DOCUMENT_TYPES } from './DocumentList';
 import { queryClient } from '@/lib/queryClient';
 
 interface DocumentUploadProps {
@@ -22,13 +23,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
   const [uploading, setUploading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
 
-  const documentTypes = [
-    { value: 'insurance', label: 'Seguro' },
-    { value: 'registration', label: 'Livrete' },
-    { value: 'inspection_report', label: 'Relatório de Inspeção' },
-    { value: 'receipt', label: 'Recibo/Fatura' },
-    { value: 'other', label: 'Outro' }
-  ];
+  const documentTypes = Object.entries(DOCUMENT_TYPES).map(([value, t]) => ({ value, label: t.label }));
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -86,7 +81,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
             queryClient.invalidateQueries({ queryKey: ['/api/vehicles', vehicleId, 'documents'] });
     } catch (error) {
       
-      setError(error instanceof Error ? error.message : 'Erro ao fazer upload do documento');
+      setError(handleApiError(error, 'Erro ao enviar o documento'));
     } finally {
       setUploading(false);
     }
@@ -96,17 +91,17 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Upload className="h-5 w-5" />
+          <Upload className="h-5 w-5" aria-hidden="true" />
           Adicionar Documento
         </CardTitle>
         <CardDescription>
-          Faça upload de documentos relacionados com o seu veículo (seguro, livrete, recibos, etc.)
+          Envie documentos do veículo (seguro, livrete, recibos, etc.)
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {error && (
           <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
+            <AlertCircle className="h-4 w-4" aria-hidden="true" />
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
@@ -128,7 +123,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
         <div>
           <Label htmlFor="document-type">Tipo de Documento</Label>
           <Select value={type} onValueChange={setType}>
-            <SelectTrigger className="mt-1">
+            <SelectTrigger id="document-type" className="mt-1">
               <SelectValue placeholder="Selecione o tipo de documento" />
             </SelectTrigger>
             <SelectContent>
@@ -142,9 +137,9 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
         </div>
 
         <div>
-          <Label htmlFor="description">Descrição</Label>
+          <Label htmlFor="document-description">Descrição</Label>
           <Input
-            id="description"
+            id="document-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Nome ou descrição do documento"
@@ -153,9 +148,9 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
         </div>
 
         <div>
-          <Label htmlFor="notes">Notas (opcional)</Label>
+          <Label htmlFor="document-notes">Notas (opcional)</Label>
           <Textarea
-            id="notes"
+            id="document-notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Informações adicionais sobre o documento"
@@ -170,11 +165,11 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
           className="w-full"
         >
           {uploading ? (
-            'A fazer upload...'
+            'A enviar...'
           ) : (
             <>
-              <FileText className="mr-2 h-4 w-4" />
-              Fazer Upload
+              <FileText className="mr-2 h-4 w-4" aria-hidden="true" />
+              Enviar Documento
             </>
           )}
         </Button>

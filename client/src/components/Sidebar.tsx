@@ -2,7 +2,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import {
   Home,
   Fuel,
@@ -179,6 +179,7 @@ export default function Sidebar({ children }: SidebarProps) {
                   </SheetTrigger>
                   <SheetContent side="right" className="w-64 p-0">
                     <SheetTitle className="sr-only">Menu</SheetTitle>
+                    <SheetDescription className="sr-only">Navegação principal da LogiCar</SheetDescription>
                     <SidebarContent onNavigate={closeMenu} onLogout={handleLogout} />
                   </SheetContent>
                 </Sheet>

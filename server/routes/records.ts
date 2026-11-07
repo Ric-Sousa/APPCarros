@@ -1,6 +1,5 @@
 import express, { type Express } from 'express';
 import path from 'path';
-import fs from 'fs';
 import {
   createFuelRecordSchema,
   updateFuelRecordSchema,
@@ -10,7 +9,7 @@ import {
   updateMileageTripSchema,
 } from '@shared/schema';
 import { storage } from '../storage';
-import { requireAuth, requireVehicle, ownedVehicle, userId, uploads, UPLOAD_DIR, HttpError, tokenFromHeader, removeUpload } from '../http';
+import { requireAuth, requireVehicle, ownedVehicle, userId, uploads, UPLOAD_DIR, HttpError, tokenFromHeader, removeUpload, limiter } from '../http';
 import { parseImage, parsePdf, buildExpensePayload } from '../services/ocrService';
 
 
@@ -26,6 +25,8 @@ export function registerRecordRoutes(app: Express) {
     if (!owns) return res.status(404).json({ message: 'Ficheiro não encontrado' });
     next();
   }, express.static(UPLOAD_DIR, {
+    // ficheiro inexistente: 404 (sem cair no index.html da SPA)
+    fallthrough: false,
     setHeaders: (res) => res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'"),
   }));
 
@@ -73,7 +74,8 @@ export function registerRecordRoutes(app: Express) {
   });
 
   // Despesa a partir de um recibo (imagem ou PDF) com OCR
-  app.post('/api/expenses/ocr', requireAuth, uploads.receipt.single('receipt'), async (req, res) => {
+  // OCR é pesado (Tesseract): limitar por utilizador/IP
+  app.post('/api/expenses/ocr', requireAuth, limiter(20, 'leituras de recibos'), uploads.receipt.single('receipt'), async (req, res) => {
     const file = req.file;
     if (!file) throw new HttpError(400, 'Nenhum ficheiro enviado');
     try {
@@ -93,7 +95,8 @@ export function registerRecordRoutes(app: Express) {
   // ---------- Viagens (quilometragem) ----------
   app.get('/api/mileage-trips', requireAuth, async (req, res) => {
     const vehicleId = req.query.vehicleId ? (await ownedVehicle(req, req.query.vehicleId)).id : undefined;
-    res.json(await storage.getUserMileageTrips(userId(req), vehicleId));
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    res.json(await storage.getUserMileageTrips(userId(req), vehicleId, status));
   });
 
   app.post('/api/mileage-trips', requireAuth, async (req, res) => {

@@ -2,13 +2,14 @@ import type { UseFormReturn } from "react-hook-form";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FUEL_TYPES } from "@shared/fuel";
 
 /** Brand/model/year/fuel and registration (InformAtrículas) fields of the add-vehicle form. */
 export default function VehicleRegistrationFields({ form }: { form: UseFormReturn<any> }) {
   return (
     <>
       {/* Auto-populated fields */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <FormField
           control={form.control}
           name="brand"
@@ -46,7 +47,7 @@ export default function VehicleRegistrationFields({ form }: { form: UseFormRetur
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <FormField
           control={form.control}
           name="year"
@@ -91,16 +92,16 @@ export default function VehicleRegistrationFields({ form }: { form: UseFormRetur
           render={({ field }) => (
             <FormItem>
               <FormLabel>Combustível</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={field.value}>
+              <Select onValueChange={field.onChange} value={field.value ?? ""}>
                 <FormControl>
                   <SelectTrigger data-testid="select-fuel-type">
-                    <SelectValue placeholder="Selecione o tipo de combustível" />
+                    <SelectValue placeholder="Selecione" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="gasoline95">Gasolina</SelectItem>
-                  <SelectItem value="diesel">Gasóleo</SelectItem>
-                  <SelectItem value="electric">Elétrico</SelectItem>
+                  {FUEL_TYPES.map((f) => (
+                    <SelectItem key={f.code} value={f.code}>{f.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -112,10 +113,10 @@ export default function VehicleRegistrationFields({ form }: { form: UseFormRetur
       {/* InformAtrículas Data */}
       <div className="space-y-4">
         <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">
-          Dados do InformAtrículas
+          Dados da Matrícula
         </h4>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField
             control={form.control}
             name="originalColor"
@@ -145,7 +146,7 @@ export default function VehicleRegistrationFields({ form }: { form: UseFormRetur
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField
             control={form.control}
             name="registrationLocation"
@@ -175,7 +176,7 @@ export default function VehicleRegistrationFields({ form }: { form: UseFormRetur
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <FormField
             control={form.control}
             name="powerCV"

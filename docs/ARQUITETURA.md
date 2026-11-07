@@ -41,12 +41,31 @@ O Express 5 encaminha os erros das rotas `async` para o `errorHandler`. Por isso
 
 ## Segurança
 
-- **Autenticação:** JWT HS256 com `JWT_SECRET` obrigatório, validade de 1h. As passwords usam bcrypt (10 rondas). Contas antigas com password em texto simples são convertidas para hash no primeiro login (enviar o próprio hash não autentica). Login e registo estão limitados a 10 pedidos por IP a cada 15 minutos.
+- **Autenticação:**
+  - JWT HS256 com `JWT_SECRET` obrigatório (≥32 caracteres), validade de 1h.
+  - As passwords usam bcrypt (10 rondas). Contas antigas com password em texto simples são convertidas para hash no primeiro login (enviar o próprio hash não autentica).
+  - O login demora o mesmo quer o email exista quer não.
+  - Há rotas para alterar a palavra-passe e para eliminar a conta (pedem a palavra-passe).
 - **Autorização:** cada recurso é verificado contra o utilizador do token. Um recurso de outro utilizador responde `404`, para não revelar que existe.
-- **Validação:** esquemas zod em `shared/schema.ts`. O `updateVehicleSchema` ignora `id`/`userId`, e as atualizações parciais não apagam campos ausentes.
+- **Validação:** esquemas zod em `shared/schema.ts`.
+  - Números e datas são validados, e o combustível é normalizado (`shared/fuel.ts`).
+  - `id`, `userId`, `createdAt` e `receiptUrl` nunca vêm do cliente.
+  - `imageUrl` só aceita fotos próprias (`/uploads/vehicle-<uuid>`) ou `https://`.
+  - As atualizações parciais não apagam campos ausentes.
+- **Rate limit** (`limiter` em `http.ts`, resposta 429 em JSON), contado por IP (configurar `TRUST_PROXY` atrás de um proxy):
+  - login: 10 falhas / 15 min;
+  - registo: 10 / hora;
+  - matrículas: 20;
+  - fotos: 30;
+  - OCR: 20;
+  - rotas, geocoding e postos: 60 / 15 min.
+  - O Nominatim é chamado no máximo 1 vez por segundo.
 - **Respostas:** o hash da password nunca sai do servidor (`toPublicUser`). Os logs não incluem corpos nem headers.
 - **Uploads:** tipos permitidos por rota (PDF/JPEG/PNG/WEBP), 5–10 MB, um ficheiro por pedido. O nome é `<userId>-<uuid>.<ext>`, com a extensão derivada do MIME. São servidos com `nosniff` e uma CSP restritiva. O acesso exige o header `Authorization` e ser o dono. Os ficheiros de pedidos falhados são apagados.
-- **Socket.IO:** JWT no handshake, CORS restrito, e `subscribe_vehicle` só para veículos do utilizador.
+- **Socket.IO:** JWT no handshake, a ligação termina quando o token expira, as origens são as mesmas da API, e `subscribe_vehicle` só funciona com veículos do utilizador.
+- **Ficheiros apagados:** ao apagar um veículo ou a conta, e ao trocar de foto (a foto própria só é apagada se nenhum veículo a usar).
+- **Serviço PHP de matrículas:** segredo partilhado (`X-Api-Key`), rate limit por IP, sem CORS, e registo fora da pasta pública com as matrículas mascaradas.
+- **Datas:** o servidor corre com `TZ=UTC`, por isso todos os motores guardam e devolvem as datas da mesma forma.
 
 ## Frontend
 
@@ -104,14 +123,13 @@ Não há chaves estrangeiras, para que o comportamento seja igual em todos os mo
 | `vehicles` | matrícula (única por utilizador), marca, modelo, ano, combustível, km, dados da matrícula, óleo/pneus, datas de inspeção/IUC/seguro | `user_id` |
 | `maintenance_records` | manutenções realizadas | `vehicle_id` |
 | `maintenance_appointments` | marcações | `vehicle_id`, `user_id` |
-| `alerts` | alertas | `vehicle_id` |
+| `alerts` | alertas gerados a partir dos prazos do veículo (`storage.syncAlerts`, id estável por prazo, estado lido/descartado guardado) | `vehicle_id` |
 | `fuel_records` | abastecimentos | `vehicle_id` |
 | `expense_records` | despesas (com recibo) | `vehicle_id` |
 | `documents` | documentos do veículo | `vehicle_id` |
 | `mileage_trips` | viagens | `vehicle_id` |
 | `route_plans` | planos de rota (JSON) | `user_id`, `vehicle_id` |
 | `charging_station_reservations` | reservas de carregamento | `vehicle_id`, `user_id` |
-| `trip_records`, `vehicle_specs` | definidas mas ainda sem uso na aplicação | `vehicle_id` |
 | `scraped_vehicles` | cache do `vehicle_api.php` | — |
 
 Para alterar o modelo, edite só o `shared/schema.ts`. A cache do `vehicle_api.php` (`scraped_vehicles`) é do servidor PHP e está em `vehicle_api.sql`.
@@ -120,4 +138,4 @@ Para alterar o modelo, edite só o `shared/schema.ts`. A cache do `vehicle_api.p
 
 - `vite build` → `dist/public` (páginas em chunks separados; o principal tem ~358 kB).
 - `esbuild` → `dist/index.js` (ESM, dependências externas; o código de Vite é removido em produção).
-- `npm start` → `node dist/index.js`. Ponha um proxy HTTPS à frente. Se o proxy reescrever IPs, configure `app.set('trust proxy', ...)` para o rate limit contar o IP real.
+- `npm start` → `node dist/index.js`. Ponha um proxy HTTPS à frente e defina `TRUST_PROXY` (ex.: `1`) para o rate limit contar o IP real. `GET /api/health` serve para monitorização. O servidor termina de forma ordenada com SIGTERM.

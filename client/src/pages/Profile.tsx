@@ -17,7 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { put, post, handleApiError } from "@/lib/apiUtils";
 import { queryClient } from "@/lib/queryClient";
-import { User, Car, Bell, Camera, Phone, Mail, MapPin, Plus } from "lucide-react";
+import { User, Car, Bell, Camera, Phone, Mail, MapPin, Plus, Shield } from "lucide-react";
+import AccountSecurity from "@/components/AccountSecurity";
 
 interface ProfileData {
   firstName: string;
@@ -130,9 +131,9 @@ export default function Profile() {
     <Sidebar>
       <div className="space-y-6">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg p-8 text-white">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg p-6 sm:p-8 text-white">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center space-x-6">
+            <div className="flex items-center gap-4 sm:gap-6 min-w-0">
               <div className="relative">
                 <Avatar className="h-24 w-24 border-4 border-white">
                   <AvatarImage src={user?.profileImageUrl || "/api/placeholder/96/96"} alt="Foto de perfil" />
@@ -160,10 +161,10 @@ export default function Profile() {
                 </Button>
               </div>
               <div>
-                <h1 className="text-3xl font-bold">
+                <h1 className="text-2xl sm:text-3xl font-bold break-words">
                   {profileData.firstName} {profileData.lastName}
                 </h1>
-                <p className="text-blue-100 mt-1">{profileData.email}</p>
+                <p className="text-blue-100 mt-1 break-all">{profileData.email}</p>
                 {user?.createdAt && (
                   <Badge variant="secondary" className="mt-2">
                     Membro desde {new Date(user.createdAt).getFullYear()}
@@ -185,18 +186,22 @@ export default function Profile() {
         </div>
 
         <Tabs defaultValue="personal" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="personal" className="flex items-center space-x-2">
+          <TabsList className="w-full justify-start overflow-x-auto">
+            <TabsTrigger value="personal" className="flex items-center gap-2 shrink-0">
               <User className="h-4 w-4" aria-hidden="true" />
               <span>Pessoal</span>
             </TabsTrigger>
-            <TabsTrigger value="vehicles" className="flex items-center space-x-2">
+            <TabsTrigger value="vehicles" className="flex items-center gap-2 shrink-0">
               <Car className="h-4 w-4" aria-hidden="true" />
               <span>Veículos</span>
             </TabsTrigger>
-            <TabsTrigger value="notifications" className="flex items-center space-x-2">
+            <TabsTrigger value="notifications" className="flex items-center gap-2 shrink-0">
               <Bell className="h-4 w-4" aria-hidden="true" />
               <span>Notificações</span>
+            </TabsTrigger>
+            <TabsTrigger value="security" className="flex items-center gap-2 shrink-0">
+              <Shield className="h-4 w-4" aria-hidden="true" />
+              <span>Segurança</span>
             </TabsTrigger>
           </TabsList>
 
@@ -221,7 +226,7 @@ export default function Profile() {
                 <div className="space-y-2">
                   <Label htmlFor="email">E-mail</Label>
                   <div className="flex items-center space-x-2">
-                    <Mail className="h-4 w-4 text-gray-500" aria-hidden="true" />
+                    <Mail className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                     <Input type="email" {...field("email")} />
                   </div>
                 </div>
@@ -229,7 +234,7 @@ export default function Profile() {
                 <div className="space-y-2">
                   <Label htmlFor="phone">Telefone</Label>
                   <div className="flex items-center space-x-2">
-                    <Phone className="h-4 w-4 text-gray-500" aria-hidden="true" />
+                    <Phone className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                     <Input type="tel" {...field("phone")} />
                   </div>
                 </div>
@@ -237,7 +242,7 @@ export default function Profile() {
                 <div className="space-y-2">
                   <Label htmlFor="address">Morada</Label>
                   <div className="flex items-center space-x-2">
-                    <MapPin className="h-4 w-4 text-gray-500" aria-hidden="true" />
+                    <MapPin className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                     <Input {...field("address")} />
                   </div>
                 </div>
@@ -275,25 +280,25 @@ export default function Profile() {
               </CardHeader>
               <CardContent>
                 {vehicles.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
+                  <div className="text-center py-8 text-muted-foreground">
                     <p>Nenhum veículo registado.</p>
                     <p className="text-sm">Adicione um veículo a partir do Dashboard.</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {vehicles.map((v) => (
-                      <div key={v.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div key={v.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border border-border rounded-lg">
                         <div className="flex items-center space-x-4">
-                          <div className="h-16 w-16 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden">
+                          <div className="h-16 w-16 bg-muted rounded-lg flex items-center justify-center overflow-hidden">
                             {v.imageUrl ? (
                               <img src={v.imageUrl} alt={`${v.brand} ${v.model}`} className="h-full w-full object-cover" />
                             ) : (
-                              <Car className="h-8 w-8 text-gray-500" aria-hidden="true" />
+                              <Car className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
                             )}
                           </div>
                           <div>
                             <h3 className="font-semibold">{v.brand} {v.model} {v.year}</h3>
-                            <p className="text-sm text-gray-600">Matrícula: {v.licensePlate || '-'}</p>
+                            <p className="text-sm text-muted-foreground">Matrícula: {v.licensePlate || '-'}</p>
                           </div>
                         </div>
                         <Button variant="outline" size="sm" asChild>
@@ -317,10 +322,10 @@ export default function Profile() {
                 {NOTIFICATION_OPTIONS.map(({ key, label, text }, i) => (
                   <div key={key}>
                     {i > 0 && <Separator className="mb-6" />}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-4">
                       <div className="space-y-0.5">
                         <Label htmlFor={`notif-${key}`}>{label}</Label>
-                        <p className="text-sm text-gray-600">{text}</p>
+                        <p className="text-sm text-muted-foreground">{text}</p>
                       </div>
                       <Switch
                         id={`notif-${key}`}
@@ -336,6 +341,10 @@ export default function Profile() {
                 ))}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="security" className="space-y-6">
+            <AccountSecurity />
           </TabsContent>
         </Tabs>
       </div>

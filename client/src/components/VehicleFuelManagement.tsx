@@ -1,417 +1,135 @@
-import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { useMemo, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { BarChart3, Calendar, Edit, Euro, Fuel, MapPin, Plus, Trash2, TrendingUp } from 'lucide-react';
+import type { FuelRecord, Vehicle } from '@shared/schema';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
 import { Badge } from './ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from './ui/form';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Textarea } from './ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { 
-  Plus, 
-  Fuel, 
-  TrendingUp, 
-  Calendar, 
-  MapPin, 
-  Euro,
-  BarChart3,
-  Clock,
-  Edit,
-  Trash2
-} from 'lucide-react';
-
+import FuelRecordDialog from './FuelRecordDialog';
+import ConfirmDialog from './ConfirmDialog';
 import { useToast } from '@/hooks/use-toast';
-import { post, put, del, handleApiError } from '@/lib/apiUtils';
-import { fuelFormSchema, useFuelRecords } from '@/lib/fuelForm';
-import FuelRecordFields from './FuelRecordFields';
+import { del, handleApiError } from '@/lib/apiUtils';
+import { computeFuelStats, FUEL_KEYS, useFuelRecords } from '@/lib/fuelForm';
+import { formatDate, formatEuro, formatNumber } from '@/lib/utils';
 
-import type { FuelRecord } from '@shared/schema';
-
-
-
-interface VehicleFuelManagementProps {
-  vehicleId: string;
-  vehicleInfo: {
-    brand: string;
-    model: string;
-    licensePlate: string;
-    fuelType?: string;
-  };
+function Stat({ icon: Icon, label, value, color }: { icon: typeof Fuel; label: string; value: string; color: string }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2">
+          <Icon className={`h-5 w-5 ${color}`} aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm text-muted-foreground">{label}</p>
+            <p className="text-xl font-bold">{value}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
-const VehicleFuelManagement: React.FC<VehicleFuelManagementProps> = ({ 
-  vehicleId, 
-  vehicleInfo 
-}) => {
+/** Abastecimentos de um veículo: estatísticas, histórico, criar, editar e apagar. */
+export default function VehicleFuelManagement({ vehicle }: { vehicle: Vehicle }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<FuelRecord | null>(null);
+  const [dialog, setDialog] = useState<{ open: boolean; record: FuelRecord | null }>({ open: false, record: null });
+  const [toDelete, setToDelete] = useState<FuelRecord | null>(null);
 
-  const form = useForm({
-    resolver: zodResolver(fuelFormSchema),
-    defaultValues: {
-      date: new Date().toISOString().split('T')[0],
-      mileage: 0,
-      liters: 0,
-      costPerLiter: 1.65,
-      totalCost: 0,
-      fuelType: vehicleInfo.fuelType || 'gasoline95',
-      gasStationName: '',
-      gasStationLocation: '',
-      fullTank: false,
-      notes: '',
-    },
-  });
+  const { data: fuelRecords = [], isLoading } = useFuelRecords(vehicle.id);
+  const stats = useMemo(() => computeFuelStats(fuelRecords), [fuelRecords]);
+  // Cópia ordenada: nunca alterar o array da cache do React Query
+  const sorted = useMemo(() => [...fuelRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), [fuelRecords]);
 
-  // Fetch fuel records for this vehicle
-    const { data: fuelRecords = [], isLoading: recordsLoading } = useFuelRecords(vehicleId);
-
-  // Calculate fuel statistics
-  const fuelStats = React.useMemo(() => {
-    if (fuelRecords.length < 2) return null;
-
-    const sortedRecords = [...fuelRecords].sort((a, b) => 
-      new Date(a.date).getTime() - new Date(b.date).getTime()
-    );
-
-    const totalLiters = sortedRecords.reduce((sum, record) => sum + Number(record.liters), 0);
-    const totalCost = sortedRecords.reduce((sum, record) => sum + Number(record.totalCost), 0);
-    const totalDistance = Number(sortedRecords[sortedRecords.length - 1].mileage) - Number(sortedRecords[0].mileage);
-    
-    const avgConsumption = totalDistance > 0 ? (totalLiters / totalDistance) * 100 : 0;
-    const avgCostPerLiter = totalLiters > 0 ? totalCost / totalLiters : 0;
-    const avgCostPer100km = totalDistance > 0 ? (totalCost / totalDistance) * 100 : 0;
-
-    return {
-      totalRecords: sortedRecords.length,
-      totalLiters: totalLiters.toFixed(1),
-      totalCost: totalCost.toFixed(2),
-      avgConsumption: avgConsumption.toFixed(1),
-      avgCostPerLiter: avgCostPerLiter.toFixed(3),
-      avgCostPer100km: avgCostPer100km.toFixed(2),
-      lastFuelDate: sortedRecords[sortedRecords.length - 1]?.date,
-      currentMileage: sortedRecords[sortedRecords.length - 1]?.mileage || 0,
-    };
-  }, [fuelRecords]);
-
-  // Add fuel record mutation
-  const addFuelRecord = useMutation({
-    mutationFn: (data: any) => post('/api/fuel-records', { ...data, vehicleId }),
+  const deleteRecord = useMutation({
+    mutationFn: (id: string) => del(`/api/fuel-records/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/fuel-records'] });
-      form.reset();
-      setIsAddModalOpen(false);
-      toast({
-        title: "Sucesso",
-        description: "Registo de combustível adicionado com sucesso.",
-      });
+      FUEL_KEYS.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
+      toast({ title: 'Registo eliminado' });
+      setToDelete(null);
     },
-    onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: handleApiError(error),
-        variant: "destructive",
-      });
-    },
+    onError: (error) => toast({ title: 'Erro', description: handleApiError(error), variant: 'destructive' }),
   });
-
-  // Update fuel record mutation
-  const updateFuelRecord = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => put(`/api/fuel-records/${id}`, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/fuel-records'] });
-      form.reset();
-      setIsEditModalOpen(false);
-      setEditingRecord(null);
-      toast({
-        title: "Sucesso",
-        description: "Registo atualizado com sucesso.",
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: handleApiError(error),
-        variant: "destructive",
-      });
-    },
-  });
-
-  // Delete fuel record mutation
-  const deleteFuelRecord = useMutation({
-    mutationFn: (recordId: string) => del(`/api/fuel-records/${recordId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/fuel-records'] });
-      toast({
-        title: "Sucesso",
-        description: "Registo eliminado com sucesso.",
-      });
-    },
-    onError: (error: any) => {
-      
-      toast({
-        title: "Erro",
-        description: handleApiError(error),
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleDeleteRecord = (recordId: string) => {
-    if (window.confirm('Tem a certeza que pretende eliminar este registo? Esta ação não pode ser desfeita.')) {
-      deleteFuelRecord.mutate(recordId);
-    }
-  };
-
-  const onSubmit = (data: any) => {
-    if (editingRecord) {
-      updateFuelRecord.mutate({ id: editingRecord.id, data: { ...data, vehicleId } });
-    } else {
-      addFuelRecord.mutate(data);
-    }
-  };
-
-  const openEditModal = (record: FuelRecord) => {
-    setEditingRecord(record);
-    // Pre-populate form with existing data
-    form.reset({
-      date: new Date(record.date).toISOString().split('T')[0],
-      mileage: Number(record.mileage),
-      liters: Number(record.liters),
-      costPerLiter: Number(record.costPerLiter),
-      totalCost: Number(record.totalCost),
-      fuelType: record.fuelType,
-      gasStationName: record.gasStationName || '',
-      gasStationLocation: record.gasStationLocation || '',
-      fullTank: record.fullTank,
-      notes: record.notes || '',
-    });
-    setIsEditModalOpen(true);
-  };
-
-  const closeModal = () => {
-    form.reset({
-      date: new Date().toISOString().split('T')[0],
-      mileage: 0,
-      liters: 0,
-      costPerLiter: 1.65,
-      totalCost: 0,
-      fuelType: vehicleInfo.fuelType || 'gasoline95',
-      gasStationName: '',
-      gasStationLocation: '',
-      fullTank: false,
-      notes: '',
-    });
-    setEditingRecord(null);
-    setIsAddModalOpen(false);
-    setIsEditModalOpen(false);
-  };
-
-  // Auto-calculate total cost when liters or cost per liter changes
-  React.useEffect(() => {
-    const liters = form.watch('liters');
-    const costPerLiter = form.watch('costPerLiter');
-    if (liters && costPerLiter) {
-      form.setValue('totalCost', Number((liters * costPerLiter).toFixed(2)));
-    }
-  }, [form.watch('liters'), form.watch('costPerLiter'), form]);
 
   return (
     <div className="space-y-6">
-      {/* Header with vehicle info and add button */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">
-            Gestão de Combustível - {vehicleInfo.brand} {vehicleInfo.model}
-          </h3>
-          <p className="text-sm text-gray-600">{vehicleInfo.licensePlate}</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold break-words">Combustível — {vehicle.brand} {vehicle.model}</h3>
+          <p className="text-sm text-muted-foreground">{vehicle.licensePlate}</p>
         </div>
-        <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Adicionar Abastecimento
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-md max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Novo Registo de Combustível</DialogTitle>
-            </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FuelRecordFields form={form} />
-                <div className="flex justify-end space-x-2">
-                  <Button type="button" variant="outline" onClick={closeModal}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={addFuelRecord.isPending}>
-                    {addFuelRecord.isPending ? "A guardar..." : "Guardar"}
-                  </Button>
-                </div>
-              </form>
-            </Form>
-          </DialogContent>
-        </Dialog>
-
-        {/* Edit Modal */}
-        <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-          <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-md max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Editar Registo de Combustível</DialogTitle>
-            </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FuelRecordFields form={form} />
-                <div className="flex justify-end space-x-2">
-                  <Button type="button" variant="outline" onClick={closeModal}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={updateFuelRecord.isPending}>
-                    {updateFuelRecord.isPending ? "Atualizando..." : "Atualizar"}
-                  </Button>
-                </div>
-              </form>
-            </Form>
-          </DialogContent>
-        </Dialog>
+        <Button onClick={() => setDialog({ open: true, record: null })} className="w-full sm:w-auto">
+          <Plus className="h-4 w-4 mr-2" aria-hidden="true" /> Adicionar Abastecimento
+        </Button>
       </div>
 
-      {/* Statistics Cards */}
-      {fuelStats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <BarChart3 className="h-5 w-5 text-blue-500" />
-                <div>
-                  <p className="text-sm text-gray-600">Consumo Médio</p>
-                  <p className="text-xl font-bold">{fuelStats.avgConsumption} L/100km</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <Euro className="h-5 w-5 text-green-500" />
-                <div>
-                  <p className="text-sm text-gray-600">Custo Total</p>
-                  <p className="text-xl font-bold">€{fuelStats.totalCost}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <Fuel className="h-5 w-5 text-orange-500" />
-                <div>
-                  <p className="text-sm text-gray-600">Total Litros</p>
-                  <p className="text-xl font-bold">{fuelStats.totalLiters} L</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <TrendingUp className="h-5 w-5 text-purple-500" />
-                <div>
-                  <p className="text-sm text-gray-600">Custo/100km</p>
-                  <p className="text-xl font-bold">€{fuelStats.avgCostPer100km}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      {stats && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Stat icon={BarChart3} color="text-blue-500" label="Consumo Médio" value={stats.avgConsumption != null ? `${formatNumber(stats.avgConsumption, 1)} L/100km` : '—'} />
+          <Stat icon={Euro} color="text-green-500" label="Custo Total" value={formatEuro(stats.totalCost)} />
+          <Stat icon={Fuel} color="text-orange-500" label="Total Litros" value={`${formatNumber(stats.totalLiters, 1)} L`} />
+          <Stat icon={TrendingUp} color="text-purple-500" label="Custo/100km" value={stats.costPer100km != null ? formatEuro(stats.costPer100km) : '—'} />
         </div>
       )}
+      {stats && stats.avgConsumption == null && (
+        <p className="text-sm text-muted-foreground">Registe pelo menos 2 abastecimentos para calcular o consumo.</p>
+      )}
 
-      {/* Fuel Records Table */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />
-            Histórico de Abastecimentos ({fuelRecords.length} registos)
+            <Calendar className="h-5 w-5" aria-hidden="true" />
+            Histórico de Abastecimentos ({fuelRecords.length})
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {recordsLoading ? (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto"></div>
-              <p className="mt-2 text-gray-600">A carregar registos...</p>
-            </div>
-          ) : fuelRecords.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Fuel className="h-12 w-12 mx-auto mb-3 opacity-50" />
+          {isLoading ? (
+            <p className="text-center py-8 text-muted-foreground" role="status">A carregar registos...</p>
+          ) : sorted.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Fuel className="h-12 w-12 mx-auto mb-3 opacity-50" aria-hidden="true" />
               <p>Nenhum registo de combustível</p>
               <p className="text-sm">Adicione o primeiro abastecimento</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2">Data</th>
-                    <th className="text-left p-2">Km</th>
-                    <th className="text-left p-2">Litros</th>
-                    <th className="text-left p-2">€/L</th>
-                    <th className="text-left p-2">Total</th>
-                    <th className="text-left p-2">Posto</th>
-                    <th className="text-left p-2">Ações</th>
+                  <tr className="border-b border-border text-left">
+                    <th className="p-2 font-medium">Data</th>
+                    <th className="p-2 font-medium">Km</th>
+                    <th className="p-2 font-medium">Litros</th>
+                    <th className="p-2 font-medium">€/L</th>
+                    <th className="p-2 font-medium">Total</th>
+                    <th className="p-2 font-medium">Posto</th>
+                    <th className="p-2 font-medium"><span className="sr-only">Ações</span></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {fuelRecords
-                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                    .map((record) => (
-                    <tr key={record.id} className="border-b hover:bg-gray-50">
-                      <td className="p-2">
-                        {new Date(record.date).toLocaleDateString('pt-PT')}
+                  {sorted.map((record) => (
+                    <tr key={record.id} className="border-b border-border hover:bg-muted/50">
+                      <td className="p-2 whitespace-nowrap">
+                        {formatDate(record.date)}
+                        {record.fullTank && <Badge variant="secondary" className="ml-2 text-[10px]">Cheio</Badge>}
                       </td>
-                      <td className="p-2">{Number(record.mileage).toLocaleString()}</td>
-                      <td className="p-2">{Number(record.liters).toFixed(1)}L</td>
-                      <td className="p-2">€{Number(record.costPerLiter).toFixed(3)}</td>
-                      <td className="p-2 font-medium">€{Number(record.totalCost).toFixed(2)}</td>
+                      <td className="p-2">{formatNumber(record.mileage)}</td>
+                      <td className="p-2">{formatNumber(record.liters, 1)} L</td>
+                      <td className="p-2">{formatNumber(record.costPerLiter, 3)} €</td>
+                      <td className="p-2 font-medium">{formatEuro(record.totalCost)}</td>
                       <td className="p-2">
-                        <div>
-                          {record.gasStationName && (
-                            <span className="text-sm font-medium">{record.gasStationName}</span>
-                          )}
-                          {record.gasStationLocation && (
-                            <div className="text-xs text-gray-500 flex items-center gap-1">
-                              <MapPin className="h-3 w-3" />
-                              {record.gasStationLocation}
-                            </div>
-                          )}
-                        </div>
+                        {record.gasStationName && <span className="font-medium">{record.gasStationName}</span>}
+                        {record.gasStationLocation && (
+                          <div className="text-xs text-muted-foreground flex items-center gap-1">
+                            <MapPin className="h-3 w-3" aria-hidden="true" /> {record.gasStationLocation}
+                          </div>
+                        )}
                       </td>
                       <td className="p-2">
                         <div className="flex gap-1">
-                          <Button 
-                            size="sm" 
-                            variant="outline" 
-                            className="h-7 w-7 p-0"
-                            onClick={() => openEditModal(record)}
-                          >
-                            <Edit className="h-3 w-3" />
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => setDialog({ open: true, record })} aria-label={`Editar abastecimento de ${formatDate(record.date)}`}>
+                            <Edit className="h-3 w-3" aria-hidden="true" />
                           </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline" 
-                            className="h-7 w-7 p-0 text-red-600 hover:text-red-700"
-                            onClick={() => handleDeleteRecord(record.id)}
-                          >
-                            <Trash2 className="h-3 w-3" />
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-destructive" onClick={() => setToDelete(record)} aria-label={`Eliminar abastecimento de ${formatDate(record.date)}`}>
+                            <Trash2 className="h-3 w-3" aria-hidden="true" />
                           </Button>
                         </div>
                       </td>
@@ -423,8 +141,16 @@ const VehicleFuelManagement: React.FC<VehicleFuelManagementProps> = ({
           )}
         </CardContent>
       </Card>
+
+      <FuelRecordDialog open={dialog.open} onOpenChange={(open) => setDialog((d) => ({ ...d, open }))} record={dialog.record} vehicle={vehicle} />
+      <ConfirmDialog
+        open={!!toDelete}
+        onOpenChange={(open) => !open && setToDelete(null)}
+        title="Eliminar abastecimento?"
+        description="Esta ação não pode ser desfeita."
+        onConfirm={() => toDelete && deleteRecord.mutate(toDelete.id)}
+        pending={deleteRecord.isPending}
+      />
     </div>
   );
-};
-
-export default VehicleFuelManagement;
+}

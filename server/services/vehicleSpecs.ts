@@ -229,13 +229,13 @@ export class VehicleSpecsService {
           capacity: specs.oilSpecs.capacity,
           intervalKm: specs.oilSpecs.intervalKm,
           intervalMonths: specs.oilSpecs.intervalMonths,
-          description: `Troca a cada ${specs.oilSpecs.intervalKm.toLocaleString()} km ou ${specs.oilSpecs.intervalMonths} ${specs.oilSpecs.intervalMonths === 1 ? 'mês' : 'meses'} (o que acontecer primeiro). Capacidade: ${specs.oilSpecs.capacity}.`
+          description: `Troca a cada ${specs.oilSpecs.intervalKm.toLocaleString('pt-PT')} km ou ${specs.oilSpecs.intervalMonths} ${specs.oilSpecs.intervalMonths === 1 ? 'mês' : 'meses'} (o que acontecer primeiro). Capacidade: ${specs.oilSpecs.capacity}.`
         },
         tireRecommendations: {
           recommendedSize: specs.tireSpecs.size,
           recommendedBrands: specs.tireSpecs.brands,
           intervalKm: specs.tireSpecs.intervalKm,
-          description: `Medida recomendada: ${specs.tireSpecs.size}. Durabilidade média: ${specs.tireSpecs.intervalKm.toLocaleString()} km.`
+          description: `Medida recomendada: ${specs.tireSpecs.size}. Durabilidade média: ${specs.tireSpecs.intervalKm.toLocaleString('pt-PT')} km.`
         }
       };
     }
@@ -271,7 +271,7 @@ export class VehicleSpecsService {
       return {
         intervalKm: specs.oilSpecs.intervalKm,
         intervalMonths: specs.oilSpecs.intervalMonths,
-        description: `${oilBrand} recomendado para ${vehicleBrand} ${vehicleModel}: Troca a cada ${specs.oilSpecs.intervalKm.toLocaleString()} km ou ${specs.oilSpecs.intervalMonths} ${specs.oilSpecs.intervalMonths === 1 ? 'mês' : 'meses'}.`
+        description: `${oilBrand} recomendado para ${vehicleBrand} ${vehicleModel}: Troca a cada ${specs.oilSpecs.intervalKm.toLocaleString('pt-PT')} km ou ${specs.oilSpecs.intervalMonths} ${specs.oilSpecs.intervalMonths === 1 ? 'mês' : 'meses'}.`
       };
     }
 
@@ -286,12 +286,13 @@ export class VehicleSpecsService {
       "Repsol": { km: 10000, months: 12 }
     };
 
-    const interval = oilBrandIntervals[oilBrand] || { km: 10000, months: 12 };
+    // Object.hasOwn: um nome como "constructor" não pode ir buscar propriedades do protótipo
+    const interval = Object.hasOwn(oilBrandIntervals, oilBrand) ? oilBrandIntervals[oilBrand] : { km: 10000, months: 12 };
     
     return {
       intervalKm: interval.km,
       intervalMonths: interval.months,
-      description: `${oilBrand}: Intervalo recomendado de ${interval.km.toLocaleString()} km ou ${interval.months} ${interval.months === 1 ? 'mês' : 'meses'}.`
+      description: `${oilBrand}: Intervalo recomendado de ${interval.km.toLocaleString('pt-PT')} km ou ${interval.months} ${interval.months === 1 ? 'mês' : 'meses'}.`
     };
   }
 }

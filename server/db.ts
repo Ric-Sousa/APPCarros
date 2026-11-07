@@ -173,7 +173,7 @@ function sqlType(col: Column): string {
 const TABLES: MySqlTable[] = [
   schema.users, schema.userPreferences, schema.vehicles, schema.maintenanceRecords, schema.maintenanceAppointments,
   schema.alerts, schema.fuelRecords, schema.expenseRecords, schema.documents, schema.mileageTrips,
-  schema.tripRecords, schema.vehicleSpecs, schema.routePlans, schema.chargingStationReservations,
+  schema.routePlans, schema.chargingStationReservations,
 ];
 
 const alreadyExists = (e: unknown) => /already exists|duplicate key name/i.test(String((e as Error)?.message));
