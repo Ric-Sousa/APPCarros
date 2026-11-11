@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { put, handleApiError } from "@/lib/apiUtils";
 import { formatDate, formatEuro } from "@/lib/utils";
 import { maintenanceLabel, MAINTENANCE_KEYS } from "@/lib/maintenance";
+import { useUndoableDelete } from "@/hooks/useUndoableDelete";
 
 interface Props {
   /** Só as marcações deste veículo; sem ele, todas as do utilizador. */
@@ -28,13 +29,20 @@ export default function AppointmentsList({ vehicleId, vehicles = [], limit }: Pr
     .slice(0, limit);
 
   const update = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: "completed" | "cancelled" }) => put(`/api/appointments/${id}`, { status }),
-    onSuccess: (_r, { status }) => {
+    mutationFn: (id: string) => put(`/api/appointments/${id}`, { status: "completed" }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/vehicles"] });
       MAINTENANCE_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
-      toast({ title: status === "completed" ? "Marcação concluída" : "Marcação cancelada" });
+      toast({ title: "Marcação concluída" });
     },
     onError: (error) => toast({ title: "Erro", description: handleApiError(error), variant: "destructive" }),
+  });
+
+  const cancel = useUndoableDelete<MaintenanceAppointment>({
+    queryKey,
+    url: (id) => `/api/appointments/${id}`,
+    message: "Marcação cancelada",
+    invalidate: [["/api/appointments"], ["/api/vehicles"]],
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground" role="status">A carregar marcações...</p>;
@@ -60,10 +68,10 @@ export default function AppointmentsList({ vehicleId, vehicles = [], limit }: Pr
               </p>
             </div>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => update.mutate({ id: a.id, status: "completed" })} disabled={update.isPending}>
+              <Button size="sm" variant="outline" onClick={() => update.mutate(a.id)} disabled={update.isPending}>
                 <Check className="h-4 w-4 mr-1" aria-hidden="true" /> Concluir
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => update.mutate({ id: a.id, status: "cancelled" })} disabled={update.isPending}>
+              <Button size="sm" variant="ghost" onClick={() => cancel(a)}>
                 <X className="h-4 w-4 mr-1" aria-hidden="true" /> Cancelar
               </Button>
             </div>

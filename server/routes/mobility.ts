@@ -6,6 +6,11 @@ import { storage } from '../storage';
 import { requireAuth, requireVehicle, ownedVehicle, userId, HttpError, limiter } from '../http';
 import { consumptionL100 } from '../stats';
 import * as external from '../services/externalApis';
+import { nearbyStations, nationalAverage, DGEG_ATTRIBUTION, DGEG_FUEL_IDS } from '../services/fuelPrices';
+import { FUEL_CODES } from '@shared/fuel';
+
+/** IoT ainda sem dispositivos reais: desligado por omissão (FEATURE_IOT=true para mostrar a demonstração). */
+export const iotEnabled = () => process.env.FEATURE_IOT === 'true';
 
 const zLat = z.coerce.number().min(-90, 'Latitude inválida').max(90, 'Latitude inválida');
 const zLon = z.coerce.number().min(-180, 'Longitude inválida').max(180, 'Longitude inválida');
@@ -283,11 +288,34 @@ export function registerMobilityRoutes(app: Express) {
 
   app.get('/api/external/enhanced-recommendations/:vehicleId', requireAuth, requireVehicle, async (req, res) => {
     const v = req.vehicle!;
-    const { data, demo } = await external.getEnhancedRecommendations(v, location(req.query.location));
+    const lat = Number(req.query.lat), lng = Number(req.query.lng);
+    const coords = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : undefined;
+    const { data, demo } = await external.getEnhancedRecommendations(v, location(req.query.location), coords);
     res.json({ success: true, demo, data, vehicle: { brand: v.brand, model: v.model, year: v.year }, message: 'Recomendações do veículo' });
   });
 
+  // ---------- Preços de combustível (DGEG) ----------
+  app.get('/api/fuel-prices', requireAuth, externalLimiter, async (req, res) => {
+    const q = z.object({
+      lat: zLat, lng: zLon,
+      fuel: z.enum(FUEL_CODES).default('gasoline95'),
+      radius: z.coerce.number().min(1).max(50).default(10),
+    }).parse(req.query);
+    if (!DGEG_FUEL_IDS[q.fuel]) throw new HttpError(400, 'A DGEG não publica preços para este tipo de energia.');
+    try {
+      const [stations, average] = await Promise.all([nearbyStations(q.fuel, q.lat, q.lng, q.radius), nationalAverage(q.fuel)]);
+      res.json({ source: 'DGEG', attribution: DGEG_ATTRIBUTION, fetchedAt: new Date().toISOString(), average, stations });
+    } catch (error) {
+      console.error('Erro na DGEG:', error instanceof Error ? error.message : error);
+      throw new HttpError(502, 'Os preços da DGEG não estão disponíveis agora. Tente mais tarde.');
+    }
+  });
+
   // ---------- IoT ----------
+  app.use(['/api/vehicles/:vehicleId/iot-devices', '/api/vehicles/:vehicleId/sensor-data', '/api/vehicles/:vehicleId/scan-devices'], (_req, res, next) => {
+    if (!iotEnabled()) return res.status(404).json({ message: 'Funcionalidade indisponível' });
+    next();
+  });
   // ponytail: não há registo de dispositivos na BD; a lista é de demonstração e os dados reais chegam por MQTT/Socket.IO
   app.get('/api/vehicles/:vehicleId/iot-devices', requireAuth, requireVehicle, (_req, res) => {
     const now = new Date().toISOString();

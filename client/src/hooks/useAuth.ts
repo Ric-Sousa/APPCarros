@@ -1,20 +1,32 @@
 import { useQuery } from "@tanstack/react-query";
-import { get, getAuthToken } from "@/lib/apiUtils";
+import { get, getAccessToken, refreshSession } from "@/lib/apiUtils";
 import type { User } from "@shared/schema";
+import type { PlanId } from "@shared/plans";
 
-export type PublicUser = Omit<User, "password">;
+export type PublicUser = Omit<User, "password" | "totpSecret" | "calendarToken" | "plan"> & {
+  plan: PlanId;
+  isAdmin?: boolean;
+};
 
+export const AUTH_USER_KEY = ["/api/auth/user"];
+
+/**
+ * Utilizador da sessão. No arranque (sem token em memória) restaura a sessão a partir do cookie;
+ * sem sessão devolve null sem erro.
+ */
 export function useAuth() {
-  const hasToken = !!getAuthToken();
   const { data: user, isLoading } = useQuery({
-    queryKey: ["/api/auth/user"],
-    queryFn: () => get<PublicUser>("/api/auth/user"),
-    enabled: hasToken,
+    queryKey: AUTH_USER_KEY,
+    queryFn: async () => {
+      if (!getAccessToken() && !(await refreshSession())) return null;
+      return get<PublicUser>("/api/auth/user");
+    },
+    staleTime: Infinity,
   });
 
   return {
-    user,
-    isLoading: hasToken && isLoading,
+    user: user ?? undefined,
+    isLoading,
     isAuthenticated: !!user,
   };
 }

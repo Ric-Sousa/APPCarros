@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import FuelEfficiencyCalculator from "@/components/FuelEfficiencyCalculator";
-import FuelStationComparator from "@/components/FuelStationComparator";
+import FuelPriceFinder from "@/components/FuelPriceFinder";
 import FuelAnalysis from "@/components/FuelAnalysis";
 import FuelRecordDialog from "@/components/FuelRecordDialog";
 import VehicleFuelManagement from "@/components/VehicleFuelManagement";
@@ -59,7 +59,7 @@ export default function FuelConsumption() {
               <TabsTrigger value="records" className="shrink-0">Abastecimentos</TabsTrigger>
               <TabsTrigger value="analysis" className="shrink-0">Análise</TabsTrigger>
               <TabsTrigger value="calculator" className="shrink-0">Calculadora</TabsTrigger>
-              <TabsTrigger value="stations" className="shrink-0">Postos</TabsTrigger>
+              <TabsTrigger value="stations" className="shrink-0">Preços e postos</TabsTrigger>
             </TabsList>
             <TabsContent value="records">
               <VehicleFuelManagement vehicle={vehicle} />
@@ -71,7 +71,7 @@ export default function FuelConsumption() {
               <FuelEfficiencyCalculator />
             </TabsContent>
             <TabsContent value="stations">
-              <FuelStationComparator />
+              <FuelPriceFinder fuelType={vehicle.fuelType} />
             </TabsContent>
           </Tabs>
         )}

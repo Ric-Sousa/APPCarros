@@ -5,11 +5,22 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Upload, FileText, AlertCircle } from 'lucide-react';
+import { Upload, FileText, AlertCircle, CalendarCheck } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
-import { post, handleApiError } from '@/lib/apiUtils';
+import { post, patch, handleApiError } from '@/lib/apiUtils';
+import { formatDate } from '@/lib/utils';
+import { useToast } from '@/hooks/use-toast';
+import { toastApiError } from '@/lib/planLimit';
 import { DOCUMENT_TYPES } from './DocumentList';
 import { queryClient } from '@/lib/queryClient';
+
+/** Validade lida do documento (OCR no servidor) que pode atualizar um prazo do veículo. */
+interface Suggestion {
+  field: 'insuranceDue' | 'inspectionDue' | 'iucDue';
+  date: string;
+  label: string;
+}
+const FIELD_LABEL: Record<Suggestion['field'], string> = { insuranceDue: 'do seguro', inspectionDue: 'da inspeção', iucDue: 'do IUC' };
 
 interface DocumentUploadProps {
   vehicleId: string;
@@ -22,6 +33,26 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
   const [notes, setNotes] = useState<string>('');
   const [uploading, setUploading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+  const [applying, setApplying] = useState(false);
+  const { toast } = useToast();
+
+  const applySuggestion = async () => {
+    if (!suggestion) return;
+    setApplying(true);
+    try {
+      await patch(`/api/vehicles/${vehicleId}`, { [suggestion.field]: suggestion.date });
+      queryClient.invalidateQueries({ queryKey: ['/api/vehicles'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      toast({ title: 'Prazo atualizado', description: `Prazo ${FIELD_LABEL[suggestion.field]}: ${formatDate(suggestion.date)}` });
+      setSuggestion(null);
+    } catch (err) {
+      toastApiError(toast, err, 'Não foi possível atualizar o prazo.');
+    } finally {
+      setApplying(false);
+    }
+  };
 
   const documentTypes = Object.entries(DOCUMENT_TYPES).map(([value, t]) => ({ value, label: t.label }));
 
@@ -59,6 +90,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
 
     setUploading(true);
     setError('');
+    setSuggestion(null);
 
     try {
       const formData = new FormData();
@@ -67,9 +99,8 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
       formData.append('description', description);
       formData.append('notes', notes);
 
-            await post(`/api/vehicles/${vehicleId}/documents`, formData);
-
-      
+      const created = await post<{ suggestion?: Suggestion | null }>(`/api/vehicles/${vehicleId}/documents`, formData);
+      if (created?.suggestion?.date && created.suggestion.field in FIELD_LABEL) setSuggestion(created.suggestion);
       setFile(null);
       setType('');
       setDescription('');
@@ -78,9 +109,9 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
       const fileInput = document.getElementById('document-upload') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
 
-            queryClient.invalidateQueries({ queryKey: ['/api/vehicles', vehicleId, 'documents'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/vehicles', vehicleId, 'documents'] });
+      toast({ title: 'Documento enviado' });
     } catch (error) {
-      
       setError(handleApiError(error, 'Erro ao enviar o documento'));
     } finally {
       setUploading(false);
@@ -103,6 +134,19 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ vehicleId }) => {
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" aria-hidden="true" />
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {suggestion && (
+          <Alert>
+            <CalendarCheck className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription className="space-y-2">
+              <p>Encontrámos a validade {formatDate(suggestion.date)} — atualizar o prazo {FIELD_LABEL[suggestion.field]}?</p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={applySuggestion} disabled={applying}>{applying ? 'A atualizar...' : 'Atualizar prazo'}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setSuggestion(null)}>Agora não</Button>
+              </div>
+            </AlertDescription>
           </Alert>
         )}
 

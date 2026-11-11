@@ -1,14 +1,13 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, Eye, FileImage, FileText, Trash2 } from 'lucide-react';
 import type { Document } from '@shared/schema';
-import { queryClient } from '@/lib/queryClient';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
-import ConfirmDialog from './ConfirmDialog';
-import { del, handleApiError, openProtectedUrl } from '@/lib/apiUtils';
+import { handleApiError, openProtectedUrl } from '@/lib/apiUtils';
+import { useUndoableDelete } from '@/hooks/useUndoableDelete';
 import { formatDate } from '@/lib/utils';
 
 export const DOCUMENT_TYPES: Record<string, { label: string; color: string }> = {
@@ -23,17 +22,9 @@ export default function DocumentList({ vehicleId }: { vehicleId: string }) {
   const queryKey = ['/api/vehicles', vehicleId, 'documents'];
   const { data: documents = [], isLoading, error: loadError } = useQuery<Document[]>({ queryKey });
   const [actionError, setActionError] = useState('');
-  const [toDelete, setToDelete] = useState<Document | null>(null);
   const error = actionError || (loadError ? handleApiError(loadError) : '');
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => del(`/api/documents/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey });
-      setToDelete(null);
-    },
-    onError: (err) => setActionError(handleApiError(err)),
-  });
+  const remove = useUndoableDelete<Document>({ queryKey, url: (id) => `/api/documents/${id}`, message: 'Documento eliminado' });
 
   const view = (fileUrl: string) => openProtectedUrl(fileUrl).catch((err) => setActionError(handleApiError(err)));
 
@@ -83,7 +74,7 @@ export default function DocumentList({ vehicleId }: { vehicleId: string }) {
                     <Button variant="outline" size="sm" onClick={() => view(doc.fileUrl)} aria-label={`Ver ${name}`}>
                       <Eye className="h-3 w-3" aria-hidden="true" />
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => { setActionError(''); setToDelete(doc); }} className="text-destructive hover:text-destructive" aria-label={`Eliminar ${name}`}>
+                    <Button variant="outline" size="sm" onClick={() => { setActionError(''); remove(doc); }} className="text-destructive hover:text-destructive" aria-label={`Eliminar ${name}`}>
                       <Trash2 className="h-3 w-3" aria-hidden="true" />
                     </Button>
                   </div>
@@ -94,14 +85,6 @@ export default function DocumentList({ vehicleId }: { vehicleId: string }) {
         )}
       </CardContent>
 
-      <ConfirmDialog
-        open={!!toDelete}
-        onOpenChange={(open) => !open && setToDelete(null)}
-        title="Eliminar documento?"
-        description={`"${toDelete?.description || 'Documento'}" e o ficheiro serão apagados.`}
-        onConfirm={() => toDelete && deleteMutation.mutate(toDelete.id)}
-        pending={deleteMutation.isPending}
-      />
     </Card>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { getAuthToken } from '@/lib/apiUtils';
+import { getAccessToken, refreshSession } from '@/lib/apiUtils';
 
 interface SensorRealtime {
   vehicleId: string;
@@ -24,12 +24,17 @@ export function useIoT(vehicleId?: string) {
     if (!vehicleId) return;
 
     const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || window.location.origin;
-    const token = getAuthToken();
-    const socket = io(SOCKET_URL, { path: '/socket.io', auth: token ? { token } : {} });
+    // auth como função: cada (re)ligação usa o token atual em memória
+    const socket = io(SOCKET_URL, { path: '/socket.io', auth: (cb) => cb({ token: getAccessToken() }) });
     socketRef.current = socket;
 
     socket.on('connect', () => {
       socket.emit('subscribe_vehicle', vehicleId);
+    });
+
+    // O servidor fecha a ligação quando o token expira: renovar a sessão e voltar a ligar
+    socket.on('disconnect', (reason) => {
+      if (reason === 'io server disconnect') refreshSession().then((ok) => { if (ok) socket.connect(); });
     });
 
     socket.on('iot:sensor', (payload: any) => {

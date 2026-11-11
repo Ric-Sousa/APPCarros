@@ -52,9 +52,9 @@ export function initIoTGateway({ httpServer, isAllowedOrigin }: IoTGatewayOption
     });
   });
 
-  const mqttUrl = process.env.MQTT_URL;
+  const mqttUrl = process.env.FEATURE_IOT === 'true' ? process.env.MQTT_URL : undefined;
   if (!mqttUrl) {
-    console.log('🔕 MQTT desligado (defina MQTT_URL para o ativar).');
+    console.log('🔕 MQTT desligado (requer FEATURE_IOT=true e MQTT_URL).');
     return { io, mqttClient: null as MqttClient | null };
   }
 

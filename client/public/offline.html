@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sem ligação — Logicar</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f5f6f8; --fg: #111827; --muted: #6b7280; --primary: #2b6ae9; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #111318; --fg: #f3f4f6; --muted: #9ca3af; --primary: #6b95ef; } }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+           font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center; padding: 16px; }
+    img { width: 72px; height: 72px; }
+    p { color: var(--muted); max-width: 22rem; line-height: 1.5; }
+    button { margin-top: 8px; padding: 10px 20px; border: 0; border-radius: 8px; background: var(--primary); color: #fff; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/icon.svg" alt="" />
+    <h1>Sem ligação à internet</h1>
+    <p>Não foi possível abrir esta página. Verifique a ligação e tente outra vez.</p>
+    <button type="button" onclick="location.reload()">Tentar novamente</button>
+  </main>
+</body>
+</html>

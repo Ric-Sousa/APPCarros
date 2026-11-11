@@ -5,6 +5,8 @@ import { registerAuthRoutes } from './routes/auth';
 import { registerVehicleRoutes } from './routes/vehicles';
 import { registerRecordRoutes } from './routes/records';
 import { registerMobilityRoutes } from './routes/mobility';
+import { registerAccountRoutes } from './routes/account';
+import { registerBillingRoutes } from './routes/billing';
 
 export function registerRoutes(app: Express) {
   // Health check (monitorização / balanceadores): 200 se a base de dados responde
@@ -21,4 +23,6 @@ export function registerRoutes(app: Express) {
   registerVehicleRoutes(app);
   registerRecordRoutes(app);
   registerMobilityRoutes(app);
+  registerAccountRoutes(app);
+  registerBillingRoutes(app);
 }

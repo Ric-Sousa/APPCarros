@@ -16,6 +16,7 @@ import VehicleRegistrationFields from "@/components/VehicleRegistrationFields";
 import VehicleDatesFields from "@/components/VehicleDatesFields";
 import VehiclePhotoField from "@/components/VehiclePhotoField";
 import VehicleMaintenanceFields from "@/components/VehicleMaintenanceFields";
+import { toastApiError } from "@/lib/planLimit";
 
 interface AddVehicleModalProps {
   isOpen: boolean;
@@ -103,9 +104,7 @@ export default function AddVehicleModal({ isOpen, onClose }: AddVehicleModalProp
       toast({ title: "Veículo adicionado", description: "O veículo foi adicionado com sucesso!" });
       onClose();
     },
-    onError: (error) => {
-      toast({ title: "Erro", description: handleApiError(error, "Erro ao adicionar veículo. Tente novamente."), variant: "destructive" });
-    },
+    onError: (error) => toastApiError(toast, error, "Erro ao adicionar veículo. Tente novamente."),
   });
 
   // Consulta de matrícula: só preenche os campos que vierem; nunca apaga o que o utilizador escreveu

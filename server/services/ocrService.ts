@@ -134,3 +134,26 @@ export function buildExpensePayload(params: {
     isBusinessExpense: false,
   };
 }
+/** Texto de uma imagem (Tesseract) ou PDF. */
+export async function extractText(filePath: string, mimetype: string): Promise<string> {
+  return (mimetype === 'application/pdf' ? await parsePdf(filePath) : await parseImage(filePath)).rawText;
+}
+
+/**
+ * Data de validade num documento (apólice de seguro, relatório de inspeção):
+ * prefere datas junto de "válido até", "validade", "termo", "fim", "próxima inspeção";
+ * senão, a data futura mais distante. Só devolve datas futuras.
+ */
+export function extractValidityDate(text: string, now = new Date()): Date | undefined {
+  const dateRe = /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b|\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+  const candidates: { date: Date; keyword: boolean }[] = [];
+  for (const m of text.matchAll(dateRe)) {
+    const [y, mo, d] = m[1] ? [+m[3], +m[2], +m[1]] : [+m[4], +m[5], +m[6]];
+    const date = new Date(Date.UTC(y, mo - 1, d));
+    if (date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d || date.getTime() <= now.getTime()) continue;
+    const before = text.slice(Math.max(0, m.index! - 60), m.index).toLowerCase();
+    candidates.push({ date, keyword: /v[áa]lid|validade|at[ée]\b|termo|fim|expira|pr[óo]xima inspe/.test(before) });
+  }
+  const pool = candidates.some((c) => c.keyword) ? candidates.filter((c) => c.keyword) : candidates;
+  return pool.sort((a, b) => b.date.getTime() - a.date.getTime())[0]?.date;
+}

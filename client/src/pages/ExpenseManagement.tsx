@@ -35,7 +35,8 @@ function StatCard({ title, icon: Icon, value, hint }: { title: string; icon: typ
 
 export default function ExpenseManagement() {
   const [isAddOpen, setIsAddOpen] = useState(false);
-  const [selectedVehicle, setSelectedVehicle] = useState("");
+  // ?veiculo=<id> abre a página já com o veículo escolhido (link a partir da página do veículo)
+  const [selectedVehicle, setSelectedVehicle] = useState(() => new URLSearchParams(window.location.search).get("veiculo") ?? "");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const { data: vehicles = [] } = useVehicles();

@@ -9,9 +9,29 @@ import {
   updateMileageTripSchema,
 } from '@shared/schema';
 import { storage } from '../storage';
-import { requireAuth, requireVehicle, ownedVehicle, userId, uploads, UPLOAD_DIR, HttpError, tokenFromHeader, removeUpload, limiter } from '../http';
-import { parseImage, parsePdf, buildExpensePayload } from '../services/ocrService';
+import { requireAuth, requireVehicle, ownedVehicle, userId, uploads, UPLOAD_DIR, HttpError, tokenFromHeader, removeUpload, limiter, requireFeature } from '../http';
+import { parseImage, parsePdf, buildExpensePayload, extractText, extractValidityDate } from '../services/ocrService';
+import { persistUpload, streamUpload } from '../files';
 
+
+// Documentos com validade: a data lida por OCR sugere o próximo prazo do veículo
+const VALIDITY_FIELDS: Record<string, { field: 'insuranceDue' | 'inspectionDue'; label: string }> = {
+  insurance: { field: 'insuranceDue', label: 'seguro' },
+  inspection_report: { field: 'inspectionDue', label: 'próxima inspeção' },
+};
+
+async function validitySuggestion(type: string, filePath: string, mimetype: string) {
+  const target = VALIDITY_FIELDS[type];
+  if (!target) return undefined;
+  try {
+    // ponytail: OCR síncrono (alguns segundos em imagens); passar para uma fila se os uploads crescerem
+    const date = extractValidityDate(await extractText(filePath, mimetype));
+    return date ? { field: target.field, date: date.toISOString().slice(0, 10), label: target.label } : undefined;
+  } catch (error) {
+    console.error('OCR do documento falhou:', error instanceof Error ? error.message : error);
+    return undefined;
+  }
+}
 
 export function registerRecordRoutes(app: Express) {
   // ---------- Ficheiros enviados ----------
@@ -25,10 +45,12 @@ export function registerRecordRoutes(app: Express) {
     if (!owns) return res.status(404).json({ message: 'Ficheiro não encontrado' });
     next();
   }, express.static(UPLOAD_DIR, {
-    // ficheiro inexistente: 404 (sem cair no index.html da SPA)
-    fallthrough: false,
     setHeaders: (res) => res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'"),
-  }));
+  }), async (req, res) => {
+    // Não está no disco: tenta o armazenamento S3; senão 404 (sem cair no index.html da SPA)
+    if (await streamUpload(path.basename(req.path), res)) return;
+    res.status(404).json({ message: 'Não encontrado' });
+  });
 
   // ---------- Combustível ----------
   app.get('/api/fuel-records', requireAuth, async (req, res) => {
@@ -75,13 +97,14 @@ export function registerRecordRoutes(app: Express) {
 
   // Despesa a partir de um recibo (imagem ou PDF) com OCR
   // OCR é pesado (Tesseract): limitar por utilizador/IP
-  app.post('/api/expenses/ocr', requireAuth, limiter(20, 'leituras de recibos'), uploads.receipt.single('receipt'), async (req, res) => {
+  app.post('/api/expenses/ocr', requireAuth, requireFeature('receiptOcr', 'A leitura automática de recibos está incluída no plano Premium.'), limiter(20, 'leituras de recibos'), uploads.receipt.single('receipt'), async (req, res) => {
     const file = req.file;
     if (!file) throw new HttpError(400, 'Nenhum ficheiro enviado');
     try {
       const vehicle = await ownedVehicle(req, req.body?.vehicleId);
       const parsed = file.mimetype === 'application/pdf' ? await parsePdf(file.path) : await parseImage(file.path);
       const expense = await storage.createExpense(buildExpensePayload({ vehicleId: vehicle.id, receiptUrl: `/uploads/${file.filename}`, parsed }));
+      await persistUpload(file);
       res.status(201).json({
         expense,
         ocr: { vendor: parsed.vendor, totalAmount: parsed.totalAmount, date: parsed.date, description: parsed.description },
@@ -142,7 +165,10 @@ export function registerRecordRoutes(app: Express) {
         uploadDate: new Date(),
         notes: notes || null,
       });
-      res.status(201).json(await storage.createDocument(data));
+      const document = await storage.createDocument(data);
+      const suggestion = await validitySuggestion(type, file.path, file.mimetype);
+      await persistUpload(file);
+      res.status(201).json({ ...document, suggestion });
     } catch (error) {
       removeUpload(file.filename);
       throw error;

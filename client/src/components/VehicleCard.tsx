@@ -1,4 +1,4 @@
-import type { Vehicle } from "@shared/schema";
+import type { VehicleWithRole } from "@/hooks/useVehicles";
 import { Button } from "@/components/ui/button";
 import { Car, Droplet, CircleDot, Calendar } from "lucide-react";
 import { fuelLabel } from "@shared/fuel";
@@ -7,8 +7,25 @@ import { Link } from "wouter";
 import { useState } from "react";
 
 interface VehicleCardProps {
-  vehicle: Vehicle;
+  vehicle: VehicleWithRole;
   onViewDetails: () => void;
+}
+
+/**
+ * Imagem mais leve para o cartão (~600 px): Unsplash aceita w/q na URL; nas miniaturas do Wikimedia
+ * usa-se o passo padrão de 960 px quando a original é maior. Outras (fotos próprias) ficam como estão.
+ */
+export function cardImageUrl(url: string): string {
+  if (url.includes("images.unsplash.com")) {
+    const u = new URL(url);
+    u.searchParams.set("w", "600");
+    u.searchParams.set("q", "70");
+    return u.toString();
+  }
+  if (url.includes("upload.wikimedia.org") || url.includes("thumb.wikimedia.org")) {
+    return url.replace(/\/(\d+)px-/, (match, n) => (Number(n) > 960 ? "/960px-" : match));
+  }
+  return url;
 }
 
 export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps) {
@@ -66,15 +83,25 @@ export default function VehicleCard({ vehicle, onViewDetails }: VehicleCardProps
   return (
     <>
       <div className="bg-card rounded-xl border border-border overflow-hidden hover-scale group" data-testid={`card-vehicle-${vehicle.id}`}>
-        <div className="relative h-48 bg-gradient-to-br from-primary/20 to-secondary/20">
+        <div className="relative aspect-[16/9] bg-gradient-to-br from-primary/20 to-secondary/20">
           {vehicle.imageUrl && !imageError ? (
             <img
-              src={vehicle.imageUrl}
+              src={cardImageUrl(vehicle.imageUrl)}
               alt={`${vehicle.brand} ${vehicle.model}`}
               className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
+              width={600}
+              height={338}
               onError={() => setImageError(true)}
             />
           ) : null}
+
+          {vehicle.role === 'driver' && (
+            <span className="absolute bottom-1 left-1 rounded bg-black/60 px-2 py-0.5 text-[11px] text-white">
+              Partilhado{vehicle.ownerName ? ` por ${vehicle.ownerName}` : ''}
+            </span>
+          )}
 
           {/* Crédito obrigatório das fotos automáticas */}
           {vehicle.imageUrl && !imageError && vehicle.imageCredit && (

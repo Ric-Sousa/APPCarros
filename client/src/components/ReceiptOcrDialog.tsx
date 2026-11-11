@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { post, handleApiError } from "@/lib/apiUtils";
+import { post, handleApiError, isPlanLimit } from "@/lib/apiUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -133,7 +133,8 @@ export default function ReceiptOcrDialog({ vehicles, selectedVehicle, onSelectVe
                     description: 'O recibo foi processado e a despesa registada.',
                   });
                 } catch (e) {
-                  setOcrError(handleApiError(e, 'Erro no OCR'));
+                  // Plano sem OCR: o aviso global com "Ver planos" já aparece (App.tsx)
+                  if (!isPlanLimit(e)) setOcrError(handleApiError(e, 'Erro no OCR'));
                 } finally {
                   setOcrProcessing(false);
                 }

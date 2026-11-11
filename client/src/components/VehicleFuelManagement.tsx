@@ -1,14 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BarChart3, Calendar, Edit, Euro, Fuel, MapPin, Plus, Trash2, TrendingUp } from 'lucide-react';
 import type { FuelRecord, Vehicle } from '@shared/schema';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import FuelRecordDialog from './FuelRecordDialog';
-import ConfirmDialog from './ConfirmDialog';
-import { useToast } from '@/hooks/use-toast';
-import { del, handleApiError } from '@/lib/apiUtils';
+import { useUndoableDelete } from '@/hooks/useUndoableDelete';
 import { computeFuelStats, FUEL_KEYS, useFuelRecords } from '@/lib/fuelForm';
 import { formatDate, formatEuro, formatNumber } from '@/lib/utils';
 
@@ -30,24 +27,18 @@ function Stat({ icon: Icon, label, value, color }: { icon: typeof Fuel; label: s
 
 /** Abastecimentos de um veículo: estatísticas, histórico, criar, editar e apagar. */
 export default function VehicleFuelManagement({ vehicle }: { vehicle: Vehicle }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<{ open: boolean; record: FuelRecord | null }>({ open: false, record: null });
-  const [toDelete, setToDelete] = useState<FuelRecord | null>(null);
 
   const { data: fuelRecords = [], isLoading } = useFuelRecords(vehicle.id);
   const stats = useMemo(() => computeFuelStats(fuelRecords), [fuelRecords]);
   // Cópia ordenada: nunca alterar o array da cache do React Query
   const sorted = useMemo(() => [...fuelRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), [fuelRecords]);
 
-  const deleteRecord = useMutation({
-    mutationFn: (id: string) => del(`/api/fuel-records/${id}`),
-    onSuccess: () => {
-      FUEL_KEYS.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
-      toast({ title: 'Registo eliminado' });
-      setToDelete(null);
-    },
-    onError: (error) => toast({ title: 'Erro', description: handleApiError(error), variant: 'destructive' }),
+  const remove = useUndoableDelete<FuelRecord>({
+    queryKey: ['/api/fuel-records', vehicle.id],
+    url: (id) => `/api/fuel-records/${id}`,
+    message: 'Abastecimento eliminado',
+    invalidate: FUEL_KEYS,
   });
 
   return (
@@ -128,7 +119,7 @@ export default function VehicleFuelManagement({ vehicle }: { vehicle: Vehicle })
                           <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => setDialog({ open: true, record })} aria-label={`Editar abastecimento de ${formatDate(record.date)}`}>
                             <Edit className="h-3 w-3" aria-hidden="true" />
                           </Button>
-                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-destructive" onClick={() => setToDelete(record)} aria-label={`Eliminar abastecimento de ${formatDate(record.date)}`}>
+                          <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-destructive" onClick={() => remove(record)} aria-label={`Eliminar abastecimento de ${formatDate(record.date)}`}>
                             <Trash2 className="h-3 w-3" aria-hidden="true" />
                           </Button>
                         </div>
@@ -143,14 +134,6 @@ export default function VehicleFuelManagement({ vehicle }: { vehicle: Vehicle })
       </Card>
 
       <FuelRecordDialog open={dialog.open} onOpenChange={(open) => setDialog((d) => ({ ...d, open }))} record={dialog.record} vehicle={vehicle} />
-      <ConfirmDialog
-        open={!!toDelete}
-        onOpenChange={(open) => !open && setToDelete(null)}
-        title="Eliminar abastecimento?"
-        description="Esta ação não pode ser desfeita."
-        onConfirm={() => toDelete && deleteRecord.mutate(toDelete.id)}
-        pending={deleteRecord.isPending}
-      />
     </div>
   );
 }

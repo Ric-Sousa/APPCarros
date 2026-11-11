@@ -1,3 +1,4 @@
+import { BRAND } from "@shared/brand";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -86,7 +87,7 @@ export default function ChargingStationReservationModal({ isOpen, onClose, vehic
 
         <form onSubmit={handleSubmit((d) => mutation.mutate(d))} className="space-y-4">
           <p className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-            Este registo é um lembrete na LogiCar. Não reserva o posto junto do operador.
+            Este registo é um lembrete no {BRAND.name}. Não reserva o posto junto do operador.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">

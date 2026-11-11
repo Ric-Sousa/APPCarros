@@ -6,12 +6,24 @@ export type ThemeMode = 'auto' | 'light' | 'dark';
 
 export interface UserPreferences {
   theme: ThemeMode;
-  notificationPreferences: {
-    maintenance: boolean;
-    fuel: boolean;
-    expenses: boolean;
-    recommendations: boolean;
-  };
+  notificationPreferences: NotificationPreferences;
+}
+
+export const LEAD_DAYS = [30, 7, 1] as const;
+
+export interface NotificationPreferences {
+  /** Lembretes por email */
+  email: boolean;
+  /** Notificações push nos dispositivos subscritos */
+  push: boolean;
+  /** Com quantos dias de antecedência avisar (subconjunto de LEAD_DAYS) */
+  leadDays: number[];
+  /** Resumo semanal dos próximos prazos */
+  weeklyDigest: boolean;
+  maintenance: boolean;
+  fuel: boolean;
+  expenses: boolean;
+  recommendations: boolean;
 }
 
 interface PreferencesContext {
@@ -22,7 +34,10 @@ interface PreferencesContext {
 const LOCAL_KEY = 'user-preferences';
 const DEFAULTS: UserPreferences = {
   theme: 'auto',
-  notificationPreferences: { maintenance: true, fuel: true, expenses: false, recommendations: true },
+  notificationPreferences: {
+    email: true, push: true, leadDays: [30, 7, 1], weeklyDigest: false,
+    maintenance: true, fuel: true, expenses: false, recommendations: true,
+  },
 };
 
 /** Junta preferências guardadas (locais ou do servidor) com os valores por omissão, ignorando valores antigos/inválidos */
@@ -30,7 +45,11 @@ function merge(base: UserPreferences, raw: unknown): UserPreferences {
   const p = (raw && typeof raw === 'object' ? raw : {}) as Partial<UserPreferences>;
   return {
     theme: p.theme === 'light' || p.theme === 'dark' || p.theme === 'auto' ? p.theme : base.theme,
-    notificationPreferences: { ...base.notificationPreferences, ...(p.notificationPreferences ?? {}) },
+    notificationPreferences: (() => {
+      const n = { ...base.notificationPreferences, ...(p.notificationPreferences ?? {}) };
+      const lead = Array.isArray(n.leadDays) ? n.leadDays.filter((d) => (LEAD_DAYS as readonly number[]).includes(d)) : base.notificationPreferences.leadDays;
+      return { ...n, leadDays: lead };
+    })(),
   };
 }
 

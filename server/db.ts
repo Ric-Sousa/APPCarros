@@ -174,6 +174,8 @@ const TABLES: MySqlTable[] = [
   schema.users, schema.userPreferences, schema.vehicles, schema.maintenanceRecords, schema.maintenanceAppointments,
   schema.alerts, schema.fuelRecords, schema.expenseRecords, schema.documents, schema.mileageTrips,
   schema.routePlans, schema.chargingStationReservations,
+  schema.refreshTokens, schema.userTokens, schema.pushSubscriptions, schema.notificationLog, schema.vehicleMembers,
+  schema.feedback, schema.productEvents, schema.schemaMigrations,
 ];
 
 const alreadyExists = (e: unknown) => /already exists|duplicate key name/i.test(String((e as Error)?.message));

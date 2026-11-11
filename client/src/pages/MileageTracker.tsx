@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Car, History, Pause, Play, RotateCcw, Route, Save, Timer } from 'lucide-react';
+import { Car, History, Pause, Play, RotateCcw, Route, Save, Timer, Trash2 } from 'lucide-react';
 import type { MileageTrip } from '@shared/schema';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import Sidebar from '@/components/Sidebar';
 import { useToast } from '@/hooks/use-toast';
 import { useVehicles } from '@/hooks/useVehicles';
+import { useUndoableDelete } from '@/hooks/useUndoableDelete';
 import { del, post, put, handleApiError } from '@/lib/apiUtils';
 import { formatDate, formatNumber } from '@/lib/utils';
 
@@ -41,6 +42,7 @@ export default function MileageTracker() {
 
   const activeTrip = trips.find((t) => t.status === 'active') ?? null;
   const history = trips.filter((t) => t.status === 'completed').slice(0, 10);
+  const removeTrip = useUndoableDelete<MileageTrip>({ queryKey: TRIPS_KEY, url: (id) => `/api/mileage-trips/${id}`, message: 'Viagem eliminada' });
 
   const [selectedVehicle, setSelectedVehicle] = useState('');
   const [startMileage, setStartMileage] = useState('');
@@ -296,9 +298,12 @@ export default function MileageTracker() {
                       <p className="font-medium break-words">{vehicleName(t.vehicleId)}</p>
                       <p className="text-xs text-muted-foreground">{formatDate(t.startTime)}{t.notes ? ` · ${t.notes}` : ''}</p>
                     </div>
-                    <div className="text-sm sm:text-right">
-                      <span className="font-semibold">{formatNumber(t.totalDistance)} km</span>
-                      <span className="text-muted-foreground"> · {formatTime(t.duration)}</span>
+                    <div className="flex items-center gap-2 text-sm sm:text-right">
+                      <span><span className="font-semibold">{formatNumber(t.totalDistance)} km</span>
+                      <span className="text-muted-foreground"> · {formatTime(t.duration)}</span></span>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => removeTrip(t)} aria-label={`Eliminar viagem de ${formatDate(t.startTime)}`}>
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
                     </div>
                   </li>
                 ))}

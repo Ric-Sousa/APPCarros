@@ -14,6 +14,18 @@ export const users = mysqlTable("users", {
   address: text("address"),
   bio: text("bio"),
   profileImageUrl: text("profile_image_url"),
+  emailVerifiedAt: datetime("email_verified_at"),
+  termsAcceptedAt: datetime("terms_accepted_at"),
+  onboardedAt: datetime("onboarded_at"),
+  // Plano: free | premium | business (null em contas antigas = free)
+  plan: varchar("plan", { length: 20 }).default("free"),
+  planExpiresAt: datetime("plan_expires_at"),
+  stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+  // Autenticação em dois passos (TOTP)
+  totpSecret: varchar("totp_secret", { length: 64 }),
+  totpEnabled: boolean("totp_enabled").default(false),
+  // Token secreto do calendário (.ics) para subscrever os prazos
+  calendarToken: varchar("calendar_token", { length: 64 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -95,6 +107,8 @@ export const alerts = mysqlTable("alerts", {
   priority: varchar("priority", { length: 20 }).notNull().default("normal"), // urgent, normal, low
   isRead: boolean("is_read").notNull().default(false),
   isDismissed: boolean("is_dismissed").notNull().default(false),
+  // "Lembrar mais tarde": escondido até esta data
+  snoozedUntil: datetime("snoozed_until"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -213,6 +227,87 @@ export const userPreferences = mysqlTable("user_preferences", {
   userId: varchar("user_id", { length: 255 }).primaryKey(),
   data: json("data").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// Sessões: refresh tokens (guardados em hash; rotação por família para detetar roubo)
+export const refreshTokens = mysqlTable("refresh_tokens", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  familyId: varchar("family_id", { length: 255 }).notNull(),
+  tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+  remember: boolean("remember").notNull().default(false),
+  userAgent: varchar("user_agent", { length: 255 }),
+  expiresAt: datetime("expires_at").notNull(),
+  revokedAt: datetime("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Tokens de uso único (verificar email, recuperar palavra-passe), guardados em hash
+export const userTokens = mysqlTable("user_tokens", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  type: varchar("type", { length: 30 }).notNull(), // verify_email | reset_password
+  tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+  expiresAt: datetime("expires_at").notNull(),
+  usedAt: datetime("used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Subscrições de notificações push (Web Push) por dispositivo
+export const pushSubscriptions = mysqlTable("push_subscriptions", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  endpoint: text("endpoint").notNull(),
+  p256dh: varchar("p256dh", { length: 255 }).notNull(),
+  auth: varchar("auth", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Notificações já enviadas (id determinístico: alerta + etapa + canal), para não repetir
+export const notificationLog = mysqlTable("notification_log", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  alertId: varchar("alert_id", { length: 255 }),
+  channel: varchar("channel", { length: 20 }).notNull(), // email | push
+  stage: varchar("stage", { length: 40 }).notNull(),
+  sentAt: timestamp("sent_at").defaultNow(),
+});
+
+// Partilha de veículos (família / condutores)
+export const vehicleMembers = mysqlTable("vehicle_members", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  vehicleId: varchar("vehicle_id", { length: 255 }).notNull(),
+  // null até o convite ser aceite
+  userId: varchar("user_id", { length: 255 }),
+  email: varchar("email", { length: 255 }).notNull(),
+  role: varchar("role", { length: 20 }).notNull().default("driver"),
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // pending | active
+  inviteTokenHash: varchar("invite_token_hash", { length: 128 }),
+  invitedBy: varchar("invited_by", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Feedback enviado de dentro da app
+export const feedback = mysqlTable("feedback", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  userId: varchar("user_id", { length: 255 }),
+  message: text("message").notNull(),
+  page: varchar("page", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Eventos de produto (métricas de ativação e retenção, sem terceiros)
+export const productEvents = mysqlTable("product_events", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  userId: varchar("user_id", { length: 255 }),
+  name: varchar("name", { length: 100 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Migrações de dados já aplicadas (server/migrations.ts)
+export const schemaMigrations = mysqlTable("schema_migrations", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  appliedAt: timestamp("applied_at").defaultNow(),
 });
 
 // Planos de rota guardados

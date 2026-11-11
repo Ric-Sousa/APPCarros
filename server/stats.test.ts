@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { consumptionL100, monthlyExpenses, predictiveRisk, vehicleRecommendations } from './stats';
-import { extractDate, extractTotal } from './services/ocrService';
+import { extractDate, extractTotal, extractValidityDate } from './services/ocrService';
 import { vehicleKind, imageScore, cleanAuthor } from './services/vehicleImage';
 import { updateVehicleSchema } from '@shared/schema';
 import type { Vehicle } from '@shared/schema';
@@ -88,4 +88,56 @@ test('créditos do Commons legíveis', () => {
 test('PATCH de veículo não aceita userId nem id', () => {
   const parsed = updateVehicleSchema.parse({ userId: 'outro', id: 'x', brand: 'BMW' });
   assert.deepEqual(parsed, { brand: 'BMW' });
+});
+
+test('prazos legais calculados a partir da matrícula', async () => {
+  const { suggestIucDue, suggestInspectionDue, nextDeadlineAfter } = await import('@shared/deadlines');
+  const now = new Date('2026-11-11T10:00:00Z');
+  const iso = (d?: Date) => d?.toISOString().slice(0, 10);
+  // IUC: fim do mês da matrícula, na próxima ocorrência
+  assert.equal(iso(suggestIucDue('2015-03-10', now)), '2027-03-31');
+  assert.equal(iso(suggestIucDue('2020-11-02', now)), '2026-11-30');
+  // Ligeiro: 4 anos, depois de 2 em 2 até aos 8, depois anual
+  assert.equal(iso(suggestInspectionDue('2024-06-15', 'car', now)), '2028-06-15');
+  assert.equal(iso(suggestInspectionDue('2021-12-01', 'car', now)), '2027-12-01'); // aos 4 (2025) já passou -> aos 6
+  assert.equal(iso(suggestInspectionDue('2010-01-20', 'car', now)), '2027-01-20'); // anual
+  assert.equal(iso(suggestInspectionDue('2025-02-01', 'van', now)), '2027-02-01');
+  assert.equal(suggestInspectionDue('2020-01-01', 'motorcycle', now), undefined);
+  assert.equal(iso(nextDeadlineAfter('iuc', new Date('2026-03-31T00:00:00Z'))), '2027-03-31');
+});
+
+test('autenticação em dois passos: códigos TOTP (vetor do RFC 6238)', async () => {
+  const { totpCode, verifyTotp, base32Encode } = await import('./totp');
+  // Segredo do RFC 6238 ("12345678901234567890"); o RFC dá 8 dígitos (94287082), aqui usam-se os últimos 6
+  const secret = base32Encode(Buffer.from('12345678901234567890'));
+  assert.equal(totpCode(secret, 59_000), '287082');
+  assert.equal(verifyTotp(secret, '287082', 59_000), true);
+  assert.equal(verifyTotp(secret, '287082', 59_000 + 90_000), false);
+  assert.equal(verifyTotp(secret, 'abc', 59_000), false);
+});
+
+test('planos: plano pago expirado volta a Grátis', async () => {
+  const { effectivePlan } = await import('@shared/plans');
+  const now = new Date('2026-11-11T00:00:00Z');
+  assert.equal(effectivePlan('premium', '2026-12-01', now).id, 'premium');
+  assert.equal(effectivePlan('premium', '2026-10-01', now).id, 'free');
+  assert.equal(effectivePlan(null, null, now).id, 'free');
+  assert.equal(effectivePlan('inventado', null, now).id, 'free');
+});
+
+test('validade lida de documentos (OCR)', () => {
+  const now = new Date('2026-11-11T00:00:00Z');
+  const apolice = 'Apólice 123\nData de emissão: 01/12/2025\nVálido até 30/11/2027\nPrémio anual';
+  assert.equal(extractValidityDate(apolice, now)?.toISOString().slice(0, 10), '2027-11-30');
+  // Sem palavra-chave: a data futura mais distante
+  assert.equal(extractValidityDate('Inspeção 12/03/2026 próxima 12-03-2027', now)?.toISOString().slice(0, 10), '2027-03-12');
+  assert.equal(extractValidityDate('Emitido em 01/01/2020', now), undefined);
+});
+
+test('emails: o HTML escapa o conteúdo', async () => {
+  const { renderMail } = await import('./services/mailer');
+  const { html, text } = renderMail({ to: 'a@b.pt', subject: 'x', paragraphs: ['<script>alert(1)</script>'], action: { label: 'Abrir', url: 'https://x.pt/?a=1&b=2' } });
+  assert.ok(!html.includes('<script>'));
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.ok(text.includes('https://x.pt/?a=1&b=2'));
 });

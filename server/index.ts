@@ -17,6 +17,13 @@ const { registerRoutes } = await import('./routes');
 const { errorHandler, HttpError } = await import('./http');
 const { initIoTGateway } = await import('./iotGateway');
 const { setupDatabase, closeDatabase, dbClient } = await import('./db');
+const { runMigrations } = await import('./migrations');
+const { registerBillingWebhook } = await import('./routes/billing');
+const { startNotificationScheduler } = await import('./notifications');
+const { initMonitoring, reportError, flushMonitoring } = await import('./monitoring');
+
+await initMonitoring();
+process.on('unhandledRejection', (reason) => { console.error('Promessa rejeitada sem tratamento:', reason); reportError(reason); });
 
 const app = express();
 app.disable('x-powered-by');
@@ -48,12 +55,19 @@ app.use(cors((req, callback) => {
   });
 }));
 
+const httpsOnly = (process.env.APP_URL ?? '').startsWith('https://');
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(self), microphone=()');
+  // Com o site em HTTPS, o browser passa a recusar HTTP durante 1 ano
+  if (httpsOnly) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
+
+// O webhook do Stripe precisa do corpo em bruto (para verificar a assinatura): antes do express.json
+registerBillingWebhook(app);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
@@ -72,6 +86,7 @@ app.use((req, res, next) => {
 try {
   console.log(`🗄️  Base de dados: ${dbClient}`);
   await setupDatabase();
+  await runMigrations();
 } catch (error) {
   console.error('❌ Erro ao ligar/preparar a base de dados:', error instanceof Error ? error.message : error);
   process.exit(1);
@@ -101,6 +116,9 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Servidor a correr na porta ${port}`);
 });
 
+// Lembretes diários (email e push)
+const notificationTimer = startNotificationScheduler();
+
 // Encerramento ordenado (deploys, Ctrl+C): deixa terminar os pedidos e fecha as ligações
 let closing = false;
 async function shutdown(signal: string) {
@@ -108,10 +126,12 @@ async function shutdown(signal: string) {
   closing = true;
   console.log(`${signal} recebido: a encerrar...`);
   setTimeout(() => process.exit(1), 10_000).unref();
+  if (notificationTimer) clearInterval(notificationTimer);
   iot.mqttClient?.end();
   await new Promise((resolve) => iot.io.close(() => resolve(null)));
   await new Promise((resolve) => server.close(() => resolve(null)));
   await closeDatabase().catch(() => {});
+  await flushMonitoring();
   process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -168,7 +168,50 @@ export function getRecommendations(vehicle: Vehicle): Recommendation[] {
   return vehicleRecommendations(vehicle);
 }
 
-export async function getEnhancedRecommendations(vehicle: Vehicle, location: string) {
+/**
+ * Posto mais barato perto do utilizador com preços reais da DGEG, no formato FuelPriceData.
+ * Devolve null se não houver postos no raio (ou a DGEG não responder).
+ */
+async function realFuelOptimization(vehicle: Vehicle, coords: { lat: number; lng: number }) {
+  const { nearbyStations, nationalStations, DGEG_ATTRIBUTION } = await import('./fuelPrices');
+  const { normalizeFuelType } = await import('@shared/fuel');
+  const fuel = normalizeFuelType(vehicle.fuelType) ?? 'gasoline95';
+  try {
+    const near = await nearbyStations(fuel, coords.lat, coords.lng, 10, 50);
+    if (!near.length) return null;
+    const cheapest = near[0];
+    const priciest = near[near.length - 1];
+    // Preços dos outros combustíveis no mesmo posto (mesmo id na DGEG)
+    const priceAt = async (f: 'gasoline95' | 'gasoline98' | 'diesel') =>
+      (await nationalStations(f).catch(() => [])).find((s) => s.id === cheapest.id)?.price ?? 0;
+    const station: FuelPriceData = {
+      station: `${cheapest.brand} ${cheapest.name}`.trim(),
+      location: cheapest.municipality,
+      address: cheapest.address,
+      gasoline95: await priceAt('gasoline95'),
+      gasoline98: await priceAt('gasoline98'),
+      diesel: await priceAt('diesel'),
+      distance: cheapest.distance,
+      lastUpdated: cheapest.updatedAt,
+    };
+    const diff = priciest.price - cheapest.price;
+    return {
+      cheapestStation: station,
+      potentialSavings: priciest.price > 0 ? (diff / priciest.price) * 100 : 0,
+      recommendations: [
+        `Posto mais barato num raio de 10 km: ${station.station} (${cheapest.price.toFixed(3).replace('.', ',')} €/L, a ${cheapest.distance} km)`,
+        `Diferença para o mais caro da zona: ${diff.toFixed(3).replace('.', ',')} € por litro`,
+        `${DGEG_ATTRIBUTION}. Preço atualizado a ${cheapest.updatedAt}.`,
+      ],
+    };
+  } catch (error) {
+    console.error('Erro nos preços da DGEG:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+export async function getEnhancedRecommendations(vehicle: Vehicle, location: string, coords?: { lat: number; lng: number }) {
+  const real = coords ? await realFuelOptimization(vehicle, coords) : null;
   const fuel = getFuelPrices();
   const weather = await getWeatherImpact(location);
   const maintenance = getMaintenancePrices();
@@ -178,16 +221,18 @@ export async function getEnhancedRecommendations(vehicle: Vehicle, location: str
   const priciest = prices[prices.length - 1];
 
   return {
-    demo: fuel.demo || weather.demo || maintenance.demo,
+    demo: (!real && fuel.demo) || weather.demo || maintenance.demo,
     data: {
-      fuelOptimization: {
+      fuelOptimization: real ?? {
         cheapestStation: cheapest,
         potentialSavings: ((priciest.gasoline95 - cheapest.gasoline95) / priciest.gasoline95) * 100,
         recommendations: [
           `Posto mais económico (referência): ${cheapest.station} (${cheapest.gasoline95}€/L)`,
           `Diferença entre postos: ${(priciest.gasoline95 - cheapest.gasoline95).toFixed(3)}€ por litro`,
+          'Partilhe a localização para ver os preços reais da DGEG perto de si.',
         ],
       },
+      fuelSource: real ? 'DGEG' : 'referência',
       weatherImpact: weather.data,
       maintenanceCosts: maintenance.data,
       aiInsights: insights,

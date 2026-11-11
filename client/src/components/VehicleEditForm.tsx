@@ -13,6 +13,7 @@ import { Loader2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { patch, handleApiError } from "@/lib/apiUtils";
 import { toDateInput } from "@/lib/utils";
+import DeadlineSuggestion from "./DeadlineSuggestion";
 
 const optionalKm = z.coerce.number<number>().int().min(0, "Quilometragem inválida").optional();
 
@@ -384,6 +385,7 @@ export default function VehicleEditForm({ vehicle, onDone }: { vehicle: Vehicle;
                         data-testid="input-edit-inspection-due"
                       />
                     </FormControl>
+                    <DeadlineSuggestion form={form} field="inspectionDue" registrationDate={vehicle.registrationDate} vehicleCategory={vehicle.vehicleCategory} iucCategory={vehicle.iucCategory} />
                     <FormMessage />
                   </FormItem>
                 )}
@@ -402,6 +404,7 @@ export default function VehicleEditForm({ vehicle, onDone }: { vehicle: Vehicle;
                         data-testid="input-edit-iuc-due"
                       />
                     </FormControl>
+                    <DeadlineSuggestion form={form} field="iucDue" registrationDate={vehicle.registrationDate} vehicleCategory={vehicle.vehicleCategory} iucCategory={vehicle.iucCategory} />
                     <FormMessage />
                   </FormItem>
                 )}

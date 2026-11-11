@@ -10,3 +10,6 @@ vite.config.ts.*
 server/data/
 *.tsbuildinfo
 data/
+backups/
+test-results/
+playwright-report/

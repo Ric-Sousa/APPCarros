@@ -8,14 +8,18 @@ import { ZodError } from 'zod';
 import { verifyJwt, type JwtPayload } from './jwtUtils';
 import { storage } from './storage';
 import { isDuplicateKeyError } from './db';
+import { reportError } from './monitoring';
+import { deleteRemote } from './files';
 import rateLimit from 'express-rate-limit';
-import { OWN_VEHICLE_PHOTO, type Vehicle } from '@shared/schema';
+import { OWN_VEHICLE_PHOTO } from '@shared/schema';
+import { effectivePlan, type Plan } from '@shared/plans';
+import type { VehicleAccess } from './storage';
 
 declare global {
   namespace Express {
     interface Request {
       user?: JwtPayload;
-      vehicle?: Vehicle;
+      vehicle?: VehicleAccess;
     }
   }
 }
@@ -23,6 +27,13 @@ declare global {
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
     super(message);
+  }
+}
+
+/** Funcionalidade fora do plano do utilizador: 402 com code PLAN_LIMIT (o cliente mostra "Ver planos"). */
+export class PlanLimitError extends HttpError {
+  constructor(public feature: string, message: string) {
+    super(402, message);
   }
 }
 
@@ -47,6 +58,26 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 /** Carrega o veículo de :id ou :vehicleId e garante que pertence ao utilizador. */
+/** Plano efetivo do utilizador autenticado (um plano pago expirado conta como Grátis). */
+export async function currentPlan(req: Request): Promise<Plan> {
+  const user = await storage.getUser(userId(req));
+  return effectivePlan(user?.plan, user?.planExpiresAt);
+}
+
+/** Bloqueia a rota se o plano não incluir a funcionalidade. */
+export const requireFeature = (feature: keyof Plan['features'], message: string) =>
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const plan = await currentPlan(req);
+    if (!plan.features[feature]) return next(new PlanLimitError(feature, message));
+    next();
+  };
+
+/** Só o dono do veículo (não os condutores com quem foi partilhado). Usar depois de requireVehicle. */
+export function requireOwner(req: Request, _res: Response, next: NextFunction) {
+  if (req.vehicle?.role !== 'owner') return next(new HttpError(403, 'Só o dono do veículo pode fazer isto.'));
+  next();
+}
+
 export async function requireVehicle(req: Request, res: Response, next: NextFunction) {
   const vehicleId = String(req.params.vehicleId ?? req.params.id);
   const vehicle = await storage.getUserVehicle(userId(req), vehicleId);
@@ -56,7 +87,7 @@ export async function requireVehicle(req: Request, res: Response, next: NextFunc
 }
 
 /** Para vehicleId vindo do corpo ou da query. Lança 404 se não for do utilizador. */
-export async function ownedVehicle(req: Request, vehicleId: unknown): Promise<Vehicle> {
+export async function ownedVehicle(req: Request, vehicleId: unknown): Promise<VehicleAccess> {
   const vehicle = typeof vehicleId === 'string' && vehicleId
     ? await storage.getUserVehicle(userId(req), vehicleId)
     : undefined;
@@ -104,6 +135,7 @@ export function removeUpload(fileUrl: string) {
   const match = /^\/uploads\/([A-Za-z0-9._-]+)$/.exec(fileUrl);
   if (!match || match[1].startsWith('.')) return;
   fs.rm(path.join(UPLOAD_DIR, match[1]), { force: true }, () => {});
+  void deleteRemote(match[1]);
 }
 
 /** Foto própria de veículo (as sugestões externas não são ficheiros nossos). */
@@ -127,6 +159,9 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof ZodError) {
     return res.status(400).json({ message: 'Erro de validação', errors: err.issues });
   }
+  if (err instanceof PlanLimitError) {
+    return res.status(402).json({ message: err.message, code: 'PLAN_LIMIT', feature: err.feature });
+  }
   if (err instanceof HttpError) {
     return res.status(err.status).json({ message: err.message });
   }
@@ -148,5 +183,6 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return res.status(409).json({ message: 'Já existe um registo com estes dados.' });
   }
   console.error('Erro não tratado:', err);
+  reportError(err);
   res.status(500).json({ message: 'Erro interno do servidor' });
 };

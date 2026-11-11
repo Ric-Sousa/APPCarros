@@ -3,7 +3,6 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useVehicles } from "@/hooks/useVehicles";
-import { useAdaptiveUI } from "@/contexts/AdaptiveUIContext";
 import Sidebar from "@/components/Sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,13 +11,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { put, post, handleApiError } from "@/lib/apiUtils";
 import { queryClient } from "@/lib/queryClient";
-import { User, Car, Bell, Camera, Phone, Mail, MapPin, Plus, Shield } from "lucide-react";
-import AccountSecurity from "@/components/AccountSecurity";
+import { User, Car, Camera, Phone, Mail, MapPin, Plus, Settings } from "lucide-react";
 
 interface ProfileData {
   firstName: string;
@@ -31,18 +27,11 @@ interface ProfileData {
 
 const PROFILE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
-const NOTIFICATION_OPTIONS = [
-  { key: "maintenance", label: "Lembretes de Manutenção", text: "Notificações sobre manutenções programadas" },
-  { key: "fuel", label: "Alertas de Combustível", text: "Avisos relacionados com abastecimentos e consumo" },
-  { key: "expenses", label: "Despesas", text: "Resumos e avisos sobre despesas" },
-  { key: "recommendations", label: "Recomendações", text: "Sugestões para poupar e manter o veículo" },
-] as const;
 
 export default function Profile() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { data: vehicles = [] } = useVehicles();
-  const { preferences, updatePreferences } = useAdaptiveUI();
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -195,14 +184,6 @@ export default function Profile() {
               <Car className="h-4 w-4" aria-hidden="true" />
               <span>Veículos</span>
             </TabsTrigger>
-            <TabsTrigger value="notifications" className="flex items-center gap-2 shrink-0">
-              <Bell className="h-4 w-4" aria-hidden="true" />
-              <span>Notificações</span>
-            </TabsTrigger>
-            <TabsTrigger value="security" className="flex items-center gap-2 shrink-0">
-              <Shield className="h-4 w-4" aria-hidden="true" />
-              <span>Segurança</span>
-            </TabsTrigger>
           </TabsList>
 
           {/* Personal Information Tab */}
@@ -312,41 +293,16 @@ export default function Profile() {
             </Card>
           </TabsContent>
 
-          {/* Notifications Tab */}
-          <TabsContent value="notifications" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Preferências de Notificação</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {NOTIFICATION_OPTIONS.map(({ key, label, text }, i) => (
-                  <div key={key}>
-                    {i > 0 && <Separator className="mb-6" />}
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="space-y-0.5">
-                        <Label htmlFor={`notif-${key}`}>{label}</Label>
-                        <p className="text-sm text-muted-foreground">{text}</p>
-                      </div>
-                      <Switch
-                        id={`notif-${key}`}
-                        checked={preferences.notificationPreferences[key]}
-                        onCheckedChange={(checked) =>
-                          updatePreferences({
-                            notificationPreferences: { ...preferences.notificationPreferences, [key]: checked },
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="security" className="space-y-6">
-            <AccountSecurity />
-          </TabsContent>
         </Tabs>
+
+        <Card>
+          <CardContent className="pt-6 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">Palavra-passe, notificações, calendário, plano e exportar ou apagar os seus dados.</p>
+            <Button variant="outline" asChild>
+              <Link href="/definicoes"><Settings className="h-4 w-4 mr-2" aria-hidden="true" />Abrir Definições</Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </Sidebar>
   );

@@ -1,0 +1,104 @@
+# Verificações em cada push e pull request: tipos, testes (SQLite + MySQL, PostgreSQL e SQL Server reais),
+# build de produção e testes ponta a ponta no browser.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JWT_SECRET: ci-secret-com-pelo-menos-32-caracteres-123
+  NOTIFICATIONS_ENABLED: 'false'
+
+jobs:
+  check:
+    name: Tipos, testes (SQLite) e build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit --noUnusedLocals --noUnusedParameters
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run build
+
+  databases:
+    name: Integração (${{ matrix.db }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [mysql, postgres, mssql]
+    services:
+      mysql:
+        image: ${{ matrix.db == 'mysql' && 'mysql:8.4' || '' }}
+        env:
+          MYSQL_ROOT_PASSWORD: Teste-12345
+          MYSQL_DATABASE: logicar_test
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping -pTeste-12345" --health-interval=5s --health-timeout=5s --health-retries=20
+      postgres:
+        image: ${{ matrix.db == 'postgres' && 'postgres:16' || '' }}
+        env:
+          POSTGRES_PASSWORD: Teste-12345
+          POSTGRES_DB: logicar_test
+        ports: ['5432:5432']
+        options: --health-cmd=pg_isready --health-interval=5s --health-timeout=5s --health-retries=20
+      mssql:
+        image: ${{ matrix.db == 'mssql' && 'mcr.microsoft.com/mssql/server:2022-latest' || '' }}
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: Teste-12345
+        ports: ['1433:1433']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Criar a base de dados (SQL Server)
+        if: matrix.db == 'mssql'
+        run: |
+          for i in $(seq 1 30); do
+            docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Teste-12345' -C -Q "CREATE DATABASE logicar_test" && break
+            sleep 3
+          done
+      - name: Testes de integração
+        run: npx tsx --test server/routes.test.ts
+        env:
+          DB_CLIENT: ${{ matrix.db }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.db == 'mysql' && '3306' || matrix.db == 'postgres' && '5432' || '1433' }}
+          DB_USER: ${{ matrix.db == 'mysql' && 'root' || matrix.db == 'postgres' && 'postgres' || 'sa' }}
+          DB_PASSWORD: Teste-12345
+          DB_NAME: logicar_test
+          DB_TRUST_SERVER_CERTIFICATE: 'true'
+
+  e2e:
+    name: Ponta a ponta (browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
